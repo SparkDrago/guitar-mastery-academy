@@ -95,7 +95,7 @@ vercel            # preview deployment
 vercel --prod     # production (only after approval)
 ```
 
-Current setup: the Vercel project `guitar-mastery-academy` (team SparkDrago) is **not yet linked to this repository**, because the Vercel GitHub app has no access to it. Previews are built from the `preview` branch. To enable automatic deployments, grant the Vercel GitHub app access to this repository (GitHub → Settings → Applications → Vercel → Repository access), then connect the repository in the Vercel project settings with `main` as the production branch. Pushes to other branches then create previews automatically.
+Current setup: the Vercel project `guitar-mastery-academy` (team SparkDrago) is linked to this repository. Pushes to `preview` (or any branch other than `main`) build a preview; the `preview` branch always has the fixed address `https://guitar-mastery-academy-git-preview-spark-drago.vercel.app`. **Pushes to `main` deploy to production**, so merge into `main` only when a release is approved.
 
 ## Browser support and the microphone
 
