@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "src/pages/TabEditor.tsx"
+        ],
+        "createdAt": "2026-11-24T10:06:41.911Z",
+        "reason": "Claude: the left double border is the repeat-start barline in the tab notation grid (music notation symbol), not a card accent"
+      }
+    ]
+  }
+}

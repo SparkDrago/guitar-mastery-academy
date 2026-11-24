@@ -1,0 +1,133 @@
+@import "tailwindcss";
+
+/*
+ * Guitar Mastery Academy design tokens.
+ * Deep-violet "practice dashboard" look: indigo surfaces, white type, a violet
+ * accent for progress, green pills for counts and success. Dark is the default;
+ * html.light swaps the neutral (ink) and text-tone scales for a light theme.
+ * Utilities reference these as CSS variables, so the swap needs no re-render.
+ */
+@font-face { font-family: "Poppins"; font-style: normal; font-weight: 400; font-display: swap; src: url("/assets/fonts/poppins-regular-v1.woff") format("woff"); }
+@font-face { font-family: "Poppins"; font-style: normal; font-weight: 500; font-display: swap; src: url("/assets/fonts/poppins-medium-v1.woff") format("woff"); }
+@font-face { font-family: "Poppins"; font-style: normal; font-weight: 600 700; font-display: swap; src: url("/assets/fonts/poppins-bold-v1.woff") format("woff"); }
+
+@theme {
+  --font-sans: "Poppins", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* Neutrals: 950 = deepest (bar tracks), 900 = page, 850 = cards, 50 = strongest text. */
+  --color-ink-950: #1d1839;
+  --color-ink-900: #262046;
+  --color-ink-850: #302957;
+  --color-ink-800: #372f63;
+  --color-ink-700: #40386f;
+  --color-ink-600: #4c4382;
+  --color-ink-500: #5f5696;
+  --color-ink-400: #8780b4;
+  --color-ink-300: #a7a1cd;
+  --color-ink-200: #cbc7e7;
+  --color-ink-100: #efedfb;
+  --color-ink-50: #ffffff;
+
+  --color-accent-300: #b9aaff;
+  --color-accent-400: #9b85ff;
+  --color-accent-500: #7a5cf2;
+  --color-accent-600: #6a4ee2;
+  --color-accent-700: #5639c6;
+
+  --color-cyan-400: #4fb2f2;
+  --color-ok-400: #3ad69a;
+  --color-ok-500: #22c185;
+  --color-warn-400: #ffb054;
+  --color-warn-500: #f5913d;
+  --color-bad-400: #ff6f8e;
+  --color-pink-400: #e0567f;
+
+  --color-sidebar: #2b2452;
+  --radius-card: 16px;
+  --shadow-card: 0 10px 30px -18px rgb(10 6 30 / 0.7);
+}
+
+/* Data marks (validated with the dataviz palette checker against the card surface).
+   Kept outside @theme because they are referenced only from inline styles. */
+:root {
+  --color-viz-1: #8466f5;
+  --color-viz-2: #3a96d6;
+  --color-viz-3: #e0567f;
+  --color-viz-4: #c27f1c;
+  --color-viz-5: #1ca873;
+}
+
+html.light {
+  --color-ink-950: #e7e4f6;
+  --color-ink-900: #f3f2fb;
+  --color-ink-850: #ffffff;
+  --color-ink-800: #f1effa;
+  --color-ink-700: #e5e2f3;
+  --color-ink-600: #d6d1ec;
+  --color-ink-500: #b6afd6;
+  --color-ink-400: #8b85b0;
+  --color-ink-300: #6c6693;
+  --color-ink-200: #4c4672;
+  --color-ink-100: #2b2652;
+  --color-ink-50: #1b1739;
+
+  --color-accent-300: #5f43d8;
+  --color-accent-400: #6a4ee2;
+
+  --color-cyan-400: #1d82c4;
+  --color-ok-400: #12935f;
+  --color-warn-400: #b86e00;
+  --color-bad-400: #d23a5f;
+  --color-pink-400: #c93d68;
+
+  --color-viz-1: #6a4ee2;
+  --color-viz-2: #1d82c4;
+  --color-viz-3: #c93d68;
+  --color-viz-4: #b8730a;
+  --color-viz-5: #12935f;
+
+  --color-sidebar: #fbfaff;
+  --shadow-card: 0 8px 24px -16px rgb(45 30 110 / 0.25);
+}
+
+@layer base {
+  html { color-scheme: dark; }
+  html.light { color-scheme: light; }
+  body {
+    @apply bg-ink-900 text-ink-100 font-sans antialiased;
+  }
+  ::selection { background: rgb(122 92 242 / 0.35); }
+  :focus-visible { outline: 2px solid var(--color-accent-400); outline-offset: 2px; border-radius: 6px; }
+  button, [role="button"] { -webkit-tap-highlight-color: transparent; }
+  input[type="range"] { accent-color: var(--color-accent-500); }
+  h1, h2, h3 { letter-spacing: -0.01em; }
+}
+
+@layer components {
+  .card { @apply rounded-[var(--radius-card)] bg-ink-850; box-shadow: var(--shadow-card); }
+  .card-pad { @apply p-5 sm:p-6; }
+  .label { @apply text-[11px] font-medium uppercase tracking-[0.08em] text-ink-400; }
+  .input { @apply w-full rounded-xl border border-ink-700 bg-ink-800 px-3.5 py-2.5 text-sm text-ink-100 placeholder:text-ink-400 focus:border-accent-500 focus:outline-none; }
+  .select { @apply rounded-xl border border-ink-700 bg-ink-800 px-3 py-2 text-sm text-ink-100 focus:border-accent-500 focus:outline-none; }
+  .prose-gma p { @apply mb-3 leading-relaxed text-ink-200; }
+  .prose-gma strong { @apply text-ink-50; }
+  .tab-text { @apply font-mono text-[12.5px] leading-[1.35] text-ink-100 whitespace-pre; }
+  .kbd { @apply rounded border border-ink-600 bg-ink-800 px-1.5 py-0.5 font-mono text-[11px] text-ink-200; }
+
+  /* Theme-aware SVG parts (CSS beats presentation attributes, which stay as fallbacks). */
+  .svg-grid { stroke: var(--color-ink-700); }
+  .svg-track { stroke: var(--color-ink-950); }
+  .svg-axis { fill: var(--color-ink-400); }
+  .svg-text { fill: var(--color-ink-100); }
+  .svg-muted { fill: var(--color-ink-300); }
+  .svg-surface { fill: var(--color-ink-850); }
+  .svg-surface-2 { fill: var(--color-ink-800); }
+  .svg-ring { stroke: var(--color-ink-700); }
+  .svg-dot-ring { stroke: var(--color-ink-850); }
+  .svg-accent { fill: var(--color-accent-500); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+}

@@ -1,0 +1,48 @@
+/** Academy structure: levels and modules. Lessons live in content/lessons/. */
+import type { Level, Module } from '@gma/learning';
+
+export const LEVELS: Level[] = [
+  { level: 0, title: 'Guitar Orientation', summary: 'Meet the electric guitar, set it up, hold it, tune it, and learn to read tab, chord diagrams and rhythm.', outcome: 'You can hold, tune, understand and operate an electric guitar.' },
+  { level: 1, title: 'First Notes & Fundamental Technique', summary: 'Clean fretting, alternate picking, basic timing, open chords, power chords and your first riffs.', outcome: 'You can play basic melodies, riffs and chords with reasonable timing and clean technique.' },
+  { level: 2, title: 'The Guitar Fretboard', summary: 'The musical alphabet, half and whole steps, every note on the neck and octave shapes.', outcome: 'You can locate notes across the fretboard instead of relying only on shapes.' },
+  { level: 3, title: 'Music Theory Foundations', summary: 'Intervals, the major scale, keys, the circle of fifths, relative minor, triads and diatonic harmony.', outcome: 'You understand the building blocks of Western music and can apply them on the guitar.' },
+  { level: 4, title: 'Rhythm & Rhythm Guitar', summary: 'Tempo, time signatures, subdivisions, syncopation, strumming and metal rhythm technique.', outcome: 'You can count and play rhythms accurately with a metronome or drummer.' },
+  { level: 5, title: 'The Pentatonic System & Blues', summary: 'Pentatonic positions, the blues scale, bends, vibrato, legato and blues improvisation.', outcome: 'You can improvise simple, musical solos instead of just running scale shapes.' },
+  { level: 6, title: 'The Complete Scale System', summary: 'Pillitiere\'s rule-based 3NPS system, CAGED, minor scales, symmetrical scales and full-neck movement.', outcome: 'You can build any diatonic scale anywhere on the neck from understanding, not memorised diagrams.' },
+  { level: 7, title: 'Modes & Advanced Diatonic Theory', summary: 'All seven modes, their characteristic notes, modes of harmonic and melodic minor, modal interchange.', outcome: 'You can hear, play and improvise with each mode in context.' },
+  { level: 8, title: 'Chords, Harmony & Chord–Scale Relationships', summary: 'Barre chords, sevenths, inversions, extensions, arpeggios, functional harmony and chord–scale theory.', outcome: 'You can create solos that follow the harmony.' },
+  { level: 9, title: 'Shredding & Advanced Lead Technique', summary: 'Picking systems, speed development, legato, sweeping, tapping, skipping, hybrid picking and expressive techniques.', outcome: 'You have the physical skills for advanced rock and metal lead guitar, without sacrificing tone or timing.' },
+  { level: 10, title: 'Improvisation Mastery', summary: 'Motifs, targeting, chromaticism, rhythm and space, tension and resolution across styles.', outcome: 'You can improvise coherent solos over static chords and changing progressions.' },
+  { level: 11, title: 'Jamming & Real-World Application', summary: 'Finding keys, hearing changes, playing with a rhythm section, song structure and performance.', outcome: 'You can join a jam or band and contribute confidently.' },
+  { level: 12, title: 'Advanced Musicianship & Personal Style', summary: 'Advanced harmony, neoclassical and progressive styles, composition, transcription and identity.', outcome: 'You can understand, compose, improvise and perform advanced guitar music in your own voice.' },
+];
+
+export const MODULES: Module[] = [
+  { id: 'm0-instrument', level: 0, title: 'The instrument', summary: 'Parts of the electric guitar, amplifiers and the signal chain.' },
+  { id: 'm0-setup', level: 0, title: 'Getting set up', summary: 'Posture, hand positions, the pick and tuning.' },
+  { id: 'm0-reading', level: 0, title: 'Reading guitar music', summary: 'Tablature, chord diagrams, rhythm notation and care of the instrument.' },
+  { id: 'm1-notes', level: 1, title: 'Single notes', summary: 'Fretting, picking, timing and simple melodies.' },
+  { id: 'm1-chords', level: 1, title: 'Chords and riffs', summary: 'Open chords, strumming, power chords and riffs.' },
+  { id: 'm2-notes', level: 2, title: 'Knowing the notes', summary: 'The musical alphabet, accidentals and the notes on every string.' },
+  { id: 'm2-navigation', level: 2, title: 'Navigating the neck', summary: 'Octaves, tuning relationships and pitch recognition.' },
+  { id: 'm3-intervals', level: 3, title: 'Intervals and scales', summary: 'Pitch, intervals and the major scale.' },
+  { id: 'm3-keys', level: 3, title: 'Keys and tonality', summary: 'Key signatures, the circle of fifths and relative minor.' },
+  { id: 'm3-harmony', level: 3, title: 'Chords and harmony', summary: 'Triads and diatonic chords.' },
+  { id: 'm4-time', level: 4, title: 'Time and subdivision', summary: 'Tempo, meter, subdivisions and syncopation.' },
+  { id: 'm4-rhythm-guitar', level: 4, title: 'Rhythm guitar', summary: 'Strumming, palm muting, downpicking, gallops and groove.' },
+  { id: 'm5-pentatonic', level: 5, title: 'The pentatonic system', summary: 'Minor and major pentatonic across five positions.' },
+  { id: 'm5-expression', level: 5, title: 'Expression', summary: 'Bends, vibrato and legato.' },
+  { id: 'm5-blues', level: 5, title: 'The blues', summary: '12-bar form, blues scale and blues phrasing.' },
+  { id: 'm6-pillitiere', level: 6, title: 'Building the better scale', summary: 'Pillitiere\'s X/Y/Z three-notes-per-string system.' },
+  { id: 'm6-systems', level: 6, title: 'Scale systems and families', summary: 'CAGED, minor scales, symmetrical scales and full-neck movement.' },
+  { id: 'm7-modes', level: 7, title: 'The seven modes', summary: 'Modal construction, sound and application.' },
+  { id: 'm7-advanced', level: 7, title: 'Beyond the major modes', summary: 'Harmonic and melodic minor modes; modal interchange.' },
+  { id: 'm8-chords', level: 8, title: 'Chord vocabulary', summary: 'Barre chords, sevenths, inversions and extensions.' },
+  { id: 'm8-harmony', level: 8, title: 'Harmony in motion', summary: 'Chord tones, functional harmony and chord–scale relationships.' },
+  { id: 'm9-picking', level: 9, title: 'Picking and speed', summary: 'Picking systems and a measurable speed method.' },
+  { id: 'm9-techniques', level: 9, title: 'Lead techniques', summary: 'Legato, sweeping, tapping, skipping, hybrid picking and expressive tools.' },
+  { id: 'm10-language', level: 10, title: 'Melodic language', summary: 'Motifs, targets, chromaticism and phrasing.' },
+  { id: 'm10-styles', level: 10, title: 'Improvising in style', summary: 'Blues, rock, metal and fusion approaches.' },
+  { id: 'm11-jamming', level: 11, title: 'Playing with others', summary: 'Key-finding, the rhythm section, song form and performance.' },
+  { id: 'm12-artistry', level: 12, title: 'Artistry', summary: 'Advanced harmony, styles, composition and transcription.' },
+];

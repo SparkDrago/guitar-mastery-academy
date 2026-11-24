@@ -1,0 +1,59 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUncheckedIndexedAccess": false,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": false,
+    "types": [
+      "node"
+    ],
+    "typeRoots": [
+      "./node_modules/@types",
+      "./types"
+    ],
+    "paths": {
+      "@gma/theory": [
+        "./packages/theory/src/index.ts"
+      ],
+      "@gma/audio": [
+        "./packages/audio/src/index.ts"
+      ],
+      "@gma/notation": [
+        "./packages/notation/src/index.ts"
+      ],
+      "@gma/learning": [
+        "./packages/learning/src/index.ts"
+      ],
+      "@gma/data": [
+        "./packages/data/src/index.ts"
+      ],
+      "@content/*": [
+        "./content/*"
+      ],
+      "@/*": [
+        "./src/*"
+      ]
+    }
+  },
+  "include": [
+    "packages",
+    "content",
+    "src",
+    "tests",
+    "types"
+  ]
+}
