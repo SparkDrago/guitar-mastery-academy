@@ -95,6 +95,8 @@ vercel            # preview deployment
 vercel --prod     # production (only after approval)
 ```
 
+Current setup: the Vercel project `guitar-mastery-academy` (team SparkDrago) is **not yet linked to this repository**, because the Vercel GitHub app has no access to it. Previews are built from the `preview` branch. To enable automatic deployments, grant the Vercel GitHub app access to this repository (GitHub → Settings → Applications → Vercel → Repository access), then connect the repository in the Vercel project settings with `main` as the production branch. Pushes to other branches then create previews automatically.
+
 ## Browser support and the microphone
 
 - The tuner and analyzer need `getUserMedia`, which browsers allow only on **HTTPS** (or `localhost`). Vercel serves HTTPS by default.
