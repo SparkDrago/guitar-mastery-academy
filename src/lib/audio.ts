@@ -5,6 +5,7 @@
  * Microphone audio is processed on the device and never uploaded.
  */
 import { scheduleUntil, type ClickEvent, type MetronomeConfig, type ArrEvent, beatsToSeconds } from '@gma/audio';
+import { sendMidiNote, shouldMuteSynth } from './midi';
 
 let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
@@ -66,6 +67,7 @@ export type Tone = 'clean' | 'crunch' | 'distorted' | 'pad';
 /** Plucked-string voice: detuned saws through an enveloped low-pass, optional drive. */
 export function pluck(midi: number, time: number, dur: number, vel = 0.7, tone: Tone = 'clean', dest?: AudioNode) {
   const c = getContext();
+  if (sendMidiNote(midi, time, c.currentTime, dur, vel) && shouldMuteSynth()) return;
   const f = midiFreq(midi);
   const g = c.createGain();
   const filter = c.createBiquadFilter();

@@ -7,6 +7,7 @@ import { store } from '@/lib/store';
 import { cx, download, getConfig, readFile, relativeDay } from '@/lib/core';
 import { navigate, useDocumentTitle, useLocation } from '@/lib/router';
 import { setMasterVolume } from '@/lib/audio';
+import { getMidiOutputs, getMidiSettings, initMidi, midiPanic, midiSupported, sendMidiTest, subscribeMidi, updateMidiSettings } from '@/lib/midi';
 import { Badge, Button, Callout, Card, Field, Modal, PageHeader, Segmented, Select, Stepper, Toggle } from '@/components/ui';
 import { TuningPicker } from '@/components/widgets';
 import { CustomTuningList } from '@/components/TuningEditor';
@@ -49,6 +50,7 @@ export function SettingsPage() {
             <Field label="App volume"><input type="range" min={0} max={100} value={volume} onChange={(e) => { const v = Number(e.target.value); setVolume(v); setMasterVolume(v / 100); try { localStorage.setItem(VOLUME_KEY, String(v)); } catch { /* not persisted */ } }} aria-label="Volume" className="w-full" /></Field>
           </div>
         </Card>
+        <MidiOutputCard />
         <Card title="Custom tunings"><CustomTuningList /></Card>
         <Card title="Your data" subtitle={store.getSnapshot().persistent ? 'Saved in this browser and, when signed in, in your account.' : 'This browser blocks storage: progress lasts only for this visit unless you sign in.'}>
           <div className="flex flex-wrap gap-2">
@@ -199,5 +201,87 @@ export function AccountPage() {
         ) : <AuthForms />}
       </Card>
     </div>
+  );
+}
+
+function MidiOutputCard() {
+  const supported = midiSupported();
+  const [ms, setMs] = useState(() => getMidiSettings());
+  const [ports, setPorts] = useState(() => getMidiOutputs());
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => subscribeMidi(() => {
+    setMs(getMidiSettings());
+    setPorts(getMidiOutputs());
+  }), []);
+
+  const toggleEnabled = async (on: boolean) => {
+    setErr(null);
+    updateMidiSettings({ enabled: on });
+    if (on) {
+      const r = await initMidi();
+      if (!r.ok) {
+        setErr(r.error ?? 'Could not access MIDI devices.');
+        updateMidiSettings({ enabled: false });
+      }
+    }
+  };
+
+  const refresh = async () => {
+    setErr(null);
+    const r = await initMidi();
+    if (!r.ok) setErr(r.error ?? 'Could not refresh MIDI devices.');
+  };
+
+  return (
+    <Card title="MIDI Output (Desktop VSTs)" subtitle="Route fretboard, exercises, scales, and tabs to your DAW or guitar VSTs.">
+      {!supported ? (
+        <Callout tone="warn" title="Web MIDI not available">
+          Use Chrome, Edge, or Brave on desktop to send MIDI to your DAW or standalone guitar VST.
+        </Callout>
+      ) : (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <Toggle checked={ms.enabled} onChange={(v) => void toggleEnabled(v)} label="Enable MIDI output" />
+            {ms.enabled && (
+              <Badge tone={ports.length ? 'ok' : 'warn'}>
+                {ports.length ? `${ports.length} port${ports.length === 1 ? '' : 's'} found` : 'No MIDI ports'}
+              </Badge>
+            )}
+          </div>
+          {err && <p className="text-xs text-warn-400">{err}</p>}
+          {ms.enabled && (
+            <>
+              <Field label="Output port" hint="Pick your virtual MIDI cable (loopMIDI on Windows, IAC Driver on macOS).">
+                <div className="flex gap-2">
+                  <div className="min-w-0 flex-1">
+                    <Select
+                      value={ms.outputId}
+                      onChange={(v) => updateMidiSettings({ outputId: v })}
+                      aria-label="MIDI output port"
+                      options={ports.length ? ports.map((p) => ({ value: p.id, label: p.name })) : [{ value: '', label: 'No MIDI outputs detected' }]}
+                    />
+                  </div>
+                  <Button size="sm" variant="ghost" onClick={() => void refresh()} aria-label="Refresh MIDI ports"><LuRefreshCw size={14} /></Button>
+                </div>
+              </Field>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="MIDI channel">
+                  <Stepper value={ms.channel} onChange={(v) => updateMidiSettings({ channel: v })} min={1} max={16} label="MIDI channel" />
+                </Field>
+                <Field label="Octave shift" hint="Adjust if your guitar VST sounds an octave too high or low.">
+                  <Stepper value={ms.octaveShift} onChange={(v) => updateMidiSettings({ octaveShift: v })} min={-2} max={2} label="Octave shift" />
+                </Field>
+              </div>
+              <Toggle checked={ms.muteSynth} onChange={(v) => updateMidiSettings({ muteSynth: v })} label="Mute built-in browser guitar synth when MIDI is active" />
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="primary" onClick={() => { if (!sendMidiTest()) setErr('Select an active MIDI output port first.'); }}>Test chord</Button>
+                <Button size="sm" variant="ghost" onClick={() => midiPanic()}>All notes off</Button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </Card>
   );
 }
