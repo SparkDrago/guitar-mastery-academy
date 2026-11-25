@@ -27,6 +27,8 @@ export const SNIFF_BYTES = 4096;
 
 const PREVIEW = /(^|[_\-. ])preview([_\-. ]|$)/i;
 
+export const isPreviewAudio = (name: string) => PREVIEW.test(baseName(name).toLowerCase());
+
 function xmlRoot(head: Uint8Array): string | null {
   let text = new TextDecoder('utf-8', { fatal: false }).decode(head);
   text = text.replace(/^﻿/, '').replace(/<\?[\s\S]*?\?>/g, '').replace(/<!--[\s\S]*?-->/g, '').replace(/<!DOCTYPE[^>]*>/gi, '');
@@ -116,7 +118,7 @@ export function roleSummary(role: FileRole): { status: 'import' | 'metadata' | '
     case 'rs-manifest': case 'rs-hsan': return { status: 'metadata', detail: 'Song details (title, artist, album, arrangement).' };
     case 'vocals-xml': return { status: 'not-used', detail: 'Lyrics: Play mode does not show lyrics yet.' };
     case 'showlights-xml': return { status: 'not-used', detail: 'Stage lighting cues: not used by Play mode.' };
-    case 'wwise-audio': return { status: 'unsupported', detail: 'Wwise-encoded audio. Browsers cannot decode the Wwise codec; add the song’s audio as OGG or WAV instead.' };
+    case 'wwise-audio': return { status: 'import', detail: 'Wwise audio (.wem): converted to OGG Vorbis in the browser.' };
     case 'wwise-bank': return { status: 'unsupported', detail: 'Wwise sound bank (playback events for the game’s audio engine). Browsers cannot use it.' };
     case 'sng': return { status: 'unsupported', detail: 'Rocksmith 2014 binary chart. SNG files are encrypted for the game; the same chart in XML form imports fine.' };
     case 'guitar-pro-legacy': return { status: 'unsupported', detail: 'Older Guitar Pro format; save it as .gp (Guitar Pro 7/8) to import.' };

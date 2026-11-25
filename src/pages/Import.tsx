@@ -552,7 +552,7 @@ function FileReports({ files, unmatched }: { files: FileReport[]; unmatched: str
           const hasDetails = !!(f.components?.length || f.entries?.length || f.facts?.length);
           const row = (
             <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
-              <span className="mt-0.5 text-ink-400">{f.role === 'psarc' || f.role === 'zip' ? <LuPackage size={16} /> : f.role === 'audio' ? <LuVolume2 size={16} /> : <LuFileMusic size={16} />}</span>
+              <span className="mt-0.5 text-ink-400">{f.role === 'psarc' || f.role === 'zip' ? <LuPackage size={16} /> : f.role === 'audio' || f.role === 'wwise-audio' ? <LuVolume2 size={16} /> : <LuFileMusic size={16} />}</span>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="truncate font-medium text-ink-50">{f.path}</span>

@@ -16,7 +16,8 @@
   "dependencies": {
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "react-icons": "5.7.0"
+    "react-icons": "5.7.0",
+    "ww2ogg-ts": "latest"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
