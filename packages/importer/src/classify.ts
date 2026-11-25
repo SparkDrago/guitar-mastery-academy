@@ -120,7 +120,7 @@ export function roleSummary(role: FileRole): { status: 'import' | 'metadata' | '
     case 'showlights-xml': return { status: 'not-used', detail: 'Stage lighting cues: not used by Play mode.' };
     case 'wwise-audio': return { status: 'import', detail: 'Wwise audio (.wem): converted to OGG Vorbis in the browser.' };
     case 'wwise-bank': return { status: 'unsupported', detail: 'Wwise sound bank (playback events for the game’s audio engine). Browsers cannot use it.' };
-    case 'sng': return { status: 'unsupported', detail: 'Rocksmith 2014 binary chart. SNG files are encrypted for the game; the same chart in XML form imports fine.' };
+    case 'sng': return { status: 'import', detail: 'Rocksmith 2014 binary chart (.sng): decrypted and parsed in the browser.' };
     case 'guitar-pro-legacy': return { status: 'unsupported', detail: 'Older Guitar Pro format; save it as .gp (Guitar Pro 7/8) to import.' };
     case 'image': return { status: 'not-used', detail: 'Artwork or texture: not used by Play mode.' };
     case 'game-data': return { status: 'not-used', detail: 'Game engine data: not needed by Play mode.' };

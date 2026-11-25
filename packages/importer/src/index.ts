@@ -9,4 +9,5 @@ export * from './classify';
 export * from './metadata';
 export * from './grouping';
 export * from './wem';
+export * from './sng';
 export * from './pipeline';

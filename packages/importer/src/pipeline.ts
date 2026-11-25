@@ -12,6 +12,7 @@ import { ArchiveError, findArchiveHandler, type OpenedArchive } from './archives
 import { blobFingerprint, ImportAborted, readExact, sha256Hex, throwIfAborted, type ByteSource } from './bytes';
 import { classify, isPreviewAudio, roleSummary, SNIFF_BYTES, type Classification } from './classify';
 import { convertWem } from './wem';
+import { songFromRocksmithSng } from './sng';
 import { groupSongs, type ArrangementItem, type AudioItem, type MetaHint, type SongDraft } from './grouping';
 import { guessFromFileName, metaFromArrangementXml, metaFromManifest } from './metadata';
 import { checkArchivePath } from './paths';
@@ -182,6 +183,12 @@ async function importArchive(
       components: arc.components, facts, entries,
     };
   }
+  const xmlStems = new Set(
+    arc.entries
+      .map((e) => e.path?.toLowerCase() ?? '')
+      .filter((p) => p.endsWith('.xml') && !/vocals|showlights/.test(p))
+      .map((p) => p.split('/').pop()!.replace(/\.xml$/, '')),
+  );
   let k = 0;
   for (const e of arc.entries) {
     throwIfAborted(o.signal);
@@ -194,7 +201,7 @@ async function importArchive(
     let ecls = classify(e.path, new Uint8Array(0));
     const cache: { bytes: Uint8Array | null } = { bytes: null };
     const getBytes = async () => (cache.bytes ??= await e.read(o.signal));
-    const wanted = (r: string) => ['arrangement-xml', 'rs-manifest', 'rs-hsan', 'gma-song', 'json', 'other-xml', 'audio', 'wwise-audio', 'guitar-pro', 'unknown'].includes(r);
+    const wanted = (r: string) => ['arrangement-xml', 'sng', 'rs-manifest', 'rs-hsan', 'gma-song', 'json', 'other-xml', 'audio', 'wwise-audio', 'guitar-pro', 'unknown'].includes(r);
     try {
       if (wanted(ecls.role) && !(ecls.role === 'unknown' && e.size > 1024 * 1024)) {
         const b = await getBytes();
@@ -208,6 +215,13 @@ async function importArchive(
         path: e.path, name: e.path.split('/').pop() ?? e.path, size: e.size, scope, origin: f.name,
         head: cache.bytes ? cache.bytes.subarray(0, SNIFF_BYTES) : new Uint8Array(0), bytes: getBytes,
       };
+      if (ecls.role === 'sng') {
+        const sngStem = item.name.toLowerCase().replace(/\.sng$/, '');
+        if (xmlStems.has(sngStem)) {
+          entries.push({ path: e.path, size: e.size, role: ecls.kind, status: 'duplicate', detail: 'Same arrangement already present as XML; imported once.' });
+          continue;
+        }
+      }
       const r = await handleItem(item, ecls, c, o.signal);
       entries.push({ path: e.path, size: e.size, role: ecls.kind, status: r.status, detail: r.detail });
     } catch (err) {
@@ -253,6 +267,21 @@ async function handleItem(it: Item, cls: Classification, c: Collect, signal?: Ab
     return { hash, dupOf: c.hashes.get(hash) };
   };
   switch (cls.role) {
+    case 'sng': {
+      const bytes = await it.bytes();
+      const hash = await sha256Hex(bytes);
+      const dupOf = c.hashes.get(hash);
+      if (dupOf) return { status: 'duplicate', detail: `Identical to ${dupOf}; imported once.` };
+      const r = await songFromRocksmithSng(bytes, `arr-${++c.seq}`, it.path);
+      if (r.isVocals) return { status: 'not-used', detail: 'Lyrics: Play mode does not show lyrics yet.' };
+      if (!r.song) return { status: 'error', detail: r.errors.join(' ') || 'No playable notes.' };
+      const errs = validateSong(r.song);
+      if (errs.length) return { status: 'error', detail: errs.join(' ') };
+      c.hashes.set(hash, it.path);
+      const guess = guessFromFileName(it.path);
+      c.arrangements.push({ key: `a${c.seq}`, song: r.song, path: it.path, origin: it.origin, scope: it.scope, hash, meta: { ...guess, arrangement: r.song.arrangement }, warnings: r.warnings });
+      return { status: 'imported', detail: `${r.song.arrangement} arrangement: ${r.song.events.length} events, ${r.song.tuning.name}${r.warnings.length ? `. ${r.warnings.join(' ')}` : ''}.` };
+    }
     case 'arrangement-xml': {
       const text = await textOf();
       const { hash, dupOf } = await dup(text);
