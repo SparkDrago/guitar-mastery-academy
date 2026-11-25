@@ -14,7 +14,7 @@ import { classify, isPreviewAudio, roleSummary, SNIFF_BYTES, type Classification
 import { convertWem, WemUnsupportedError } from './wem';
 import { songFromRocksmithSng } from './sng';
 import { groupSongs, type ArrangementItem, type AudioItem, type MetaHint, type SongDraft } from './grouping';
-import { guessFromFileName, metaFromArrangementXml, metaFromManifest } from './metadata';
+import { guessFromFileName, keyFromPath, metaFromArrangementXml, metaFromManifest } from './metadata';
 import { checkArchivePath } from './paths';
 import type { ComponentReport, EntryReport, EntryStatus, Fact } from './types';
 
@@ -68,7 +68,7 @@ export interface ImportOptions {
 }
 
 const TEXT_LIMIT = 64 * 1024 * 1024;
-const decode = (b: Uint8Array) => new TextDecoder('utf-8', { fatal: false }).decode(b).replace(/^﻿/, '');
+const decode = (b: Uint8Array) => new TextDecoder('utf-8', { fatal: false }).decode(b).replace(/^\ufeff/, '');
 
 /** Item being handled: a loose file or an archive entry. */
 interface Item {
@@ -278,8 +278,20 @@ async function handleItem(it: Item, cls: Classification, c: Collect, signal?: Ab
       const errs = validateSong(r.song);
       if (errs.length) return { status: 'error', detail: errs.join(' ') };
       c.hashes.set(hash, it.path);
-      const guess = guessFromFileName(it.path);
-      c.arrangements.push({ key: `a${c.seq}`, song: r.song, path: it.path, origin: it.origin, scope: it.scope, hash, meta: { ...guess, arrangement: r.song.arrangement }, warnings: r.warnings });
+      const songKey = keyFromPath(it.path);
+      const guess = it.scope
+        ? {}
+        : guessFromFileName(it.name.replace(/_(?:lead|rhythm|bass|combo|vocals|jvocals)\d*(?=\.sng$)/i, ''));
+      c.arrangements.push({
+        key: `a${c.seq}`,
+        song: r.song,
+        path: it.path,
+        origin: it.origin,
+        scope: it.scope,
+        hash,
+        meta: { ...guess, songKey, arrangement: r.song.arrangement },
+        warnings: r.warnings,
+      });
       return { status: 'imported', detail: `${r.song.arrangement} arrangement: ${r.song.events.length} events, ${r.song.tuning.name}${r.warnings.length ? `. ${r.warnings.join(' ')}` : ''}.` };
     }
     case 'arrangement-xml': {

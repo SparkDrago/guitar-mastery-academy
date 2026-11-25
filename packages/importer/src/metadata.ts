@@ -47,16 +47,16 @@ export function keyFromAlbumArt(art?: string): string | undefined {
   return m ? m[1].toLowerCase() : undefined;
 }
 
-/** "songs/arr/sendmeanangel_lead.xml" → "sendmeanangel" (Rocksmith package layout only). */
+/** "songs/arr/sendmeanangel_lead.xml" or "songs/bin/generic/sendmeanangel_lead.sng" → "sendmeanangel" (Rocksmith package layout only). */
 export function keyFromPath(path: string): string | undefined {
-  const m = /(?:^|\/)(?:songs\/arr|manifests\/[^/]+)\/([a-z0-9]+)_(?:lead|rhythm|bass|combo|vocals|jvocals|showlights)\d*\.(?:xml|json)$/i.exec(path);
+  const m = /(?:^|\/)(?:songs\/arr|songs\/bin\/[^/]+|manifests\/[^/]+)\/([a-z0-9_-]+?)_(?:lead|rhythm|bass|combo|vocals|jvocals|showlights)\d*\.(?:xml|json|sng)$/i.exec(path);
   return m ? m[1].toLowerCase() : undefined;
 }
 
 /** Rocksmith manifest (.json) or song index (.hsan): {"Entries": {id: {"Attributes": {...}}}}. */
 export function metaFromManifest(text: string, path: string): SongMeta[] {
   let doc: unknown;
-  try { doc = JSON.parse(text.replace(/^﻿/, '')); } catch { return []; }
+  try { doc = JSON.parse(text.replace(/^\ufeff/, '')); } catch { return []; }
   const entries = (doc as { Entries?: Record<string, { Attributes?: Record<string, unknown> }> })?.Entries;
   if (!entries || typeof entries !== 'object') return [];
   const out: SongMeta[] = [];
@@ -82,8 +82,9 @@ export function metaFromManifest(text: string, path: string): SongMeta[] {
 
 /** "Scorpions_-_Send_me_an_Angel_p.psarc" → { artist: "Scorpions", title: "Send me an Angel" }. */
 export function guessFromFileName(name: string): { artist?: string; title?: string } {
+  const base = name.split('/').pop() ?? name;
   // Strip the extension, the platform suffix (_p PC, _m Mac) and a version tag (_v, _v2, _v1_3).
-  const stem = name.replace(/\.[^.]+$/, '').replace(/_[pm]$/i, '').replace(/_v\d*(_\d+)*$/i, '');
+  const stem = base.replace(/\.[^.]+$/, '').replace(/_[pm]$/i, '').replace(/_v\d*(_\d+)*$/i, '');
   const clean = (s: string) => s.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
   // "Artist_-_Title" or "Artist - Title".
   let parts = stem.split(/_-_|\s+-\s+/);
