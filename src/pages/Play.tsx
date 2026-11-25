@@ -13,6 +13,7 @@ import {
   type PlaySong, type SongEvent,
 } from '@gma/notation';
 import { PlayScorer, type Exercise, type PlayStats } from '@gma/learning';
+import { convertWem } from '@gma/importer';
 import { chroma as chromaOf, yin } from '@gma/audio';
 import { reverseChordLookup, pcName } from '@gma/theory';
 import { useAllExercises, useStudent } from '@/lib/hooks';
@@ -161,9 +162,19 @@ function SetupPanel({ source, onSelect, onStart, onChanged }: { source: Source |
   const frets = notes.map((n) => n.fret);
   const best = source.kind === 'imported' ? source.arr.best : readJson<Record<string, { accuracy: number }>>(BEST_KEY, {})[song.id];
 
-  const attachAudio = async (f: File) => {
+  const attachAudio = async (picked: File) => {
     if (source.kind !== 'imported') return;
     const lib = source.lib;
+    let f: File = picked;
+    if (/\.wem$/i.test(picked.name)) {
+      try {
+        const r = convertWem(new Uint8Array(await picked.arrayBuffer()));
+        f = new File([r.bytes as BlobPart], picked.name.replace(/\.wem$/i, '.wav'), { type: r.mime });
+      } catch (e) {
+        store.toast('This .wem file cannot be used', (e as Error).message, 'warning');
+        return;
+      }
+    }
     const key = lib.audio?.key ?? `audio-${lib.id}`;
     await library.putAudio(key, f);
     await library.put({ ...lib, audio: { key, name: f.name, size: f.size, type: f.type }, sync: { ...lib.sync, method: 'manual' } });
@@ -200,11 +211,11 @@ function SetupPanel({ source, onSelect, onStart, onChanged }: { source: Source |
         )}
         {source.kind === 'exercise' && <Field label="Tempo"><Stepper value={bpm} onChange={setBpm} min={30} max={260} step={2} suffix="bpm" label="Exercise tempo" /></Field>}
         {source.kind === 'imported' && (
-          <Field label="Recording" hint="Your own audio of this song (MP3, OGG, WAV, M4A). Stays on this device.">
+          <Field label="Recording" hint="Your own audio of this song (MP3, OGG, WAV, M4A, or PCM/ADPCM .wem). Stays on this device.">
             <div className="flex flex-wrap items-center gap-2">
               <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-ink-700 bg-ink-800 px-3 py-2 text-sm text-ink-100 hover:bg-ink-700">
                 <LuMusic size={14} /> {source.lib.audio ? 'Replace audio' : 'Add audio'}
-                <input type="file" accept="audio/*,.ogg,.mp3,.wav,.m4a,.flac" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; if (f) void attachAudio(f); }} data-testid="play-audio" />
+                <input type="file" accept="audio/*,.ogg,.mp3,.wav,.m4a,.flac,.wem" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void attachAudio(f); }} data-testid="play-audio" />
               </label>
               <span className="truncate text-xs text-ink-400">{source.lib.audio?.name ?? 'Without audio, a click and guide tones play instead.'}</span>
             </div>

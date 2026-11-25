@@ -36,7 +36,7 @@ Every input gets a `FileReport` with one of the statuses `imported`, `partial`, 
 |---|---|
 | imported | became part of a song (arrangement, audio) |
 | metadata | read for title, artist, album, arrangement, song length |
-| unsupported | a recognised format the browser cannot use (encrypted `.sng`, Wwise `.wem`/`.bnk`, old Guitar Pro) |
+| unsupported | a recognised format the browser cannot use (encrypted `.sng`, Wwise Vorbis/Opus `.wem`, `.bnk`, old Guitar Pro) |
 | not-used | recognised but not needed by Play mode (lyrics, showlights, artwork, game data) |
 | duplicate | identical chart already in this import |
 | rejected / error | unsafe path, over the size limit, or damaged |
@@ -50,6 +50,19 @@ Archives also report their structural components (`ComponentReport`: `ok`, `warn
 - Entry 0 is the manifest (newline-separated paths). Each name's MD5 is checked against the TOC, and paths are validated: no `..`, no drive letters, no control characters, length limits.
 - Layout checks for every entry (block range, data within the file, truncation), plus a per-entry decompression limit (1 GiB) against decompression bombs.
 - Flag 0x4 (encrypted TOC, used by Rocksmith 2014): the header and compression are reported, the TOC is reported as unsupported, and the block table, manifest and data as unavailable. **Nothing is decrypted.**
+
+## Wwise audio (`packages/importer/src/wem.ts`)
+
+`.wem` files (loose, inside archives, or picked with Play mode's *Add audio*) are read by their RIFF/RIFX `fmt ` codec tag:
+
+| Codec tag | Result |
+|---|---|
+| 0x0001 PCM, 0x0003 float, 0xFFFE extensible PCM | rewritten as a plain little-endian WAV (Wwise's extra chunks dropped, RIFX byte-swapped) |
+| 0x0002 Wwise IMA ADPCM | decoded to 16-bit WAV (per-channel sub-blocks, 4-byte header, low nibble first) |
+| 0xFFFF Wwise Vorbis (Rocksmith 2014) | reported as unsupported with conversion steps |
+| 0x3040/0x3041 Wwise Opus, XMA, others | reported as unsupported with conversion steps |
+
+Wwise Vorbis removes the Vorbis codebooks from the stream and refers to them by index into an external table (the aoTuV 6.03 "packed codebooks" that ww2ogg and vgmstream ship). That table is not bundled here, so the stream cannot be rebuilt into Ogg in the browser yet. Adding it later only touches the `0xFFFF` branch of `convertWem`: rebuild the Ogg Vorbis headers and packets, and hand the Ogg to the browser's own decoder. Until then, convert with `vgmstream-cli song.wem -o song.wav` (or ww2ogg + revorb, or the Custom Song Toolkit) and import the WAV/OGG.
 
 ## Adding an archive format
 

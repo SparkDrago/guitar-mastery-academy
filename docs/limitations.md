@@ -15,7 +15,7 @@ An honest list of what the current build does not do, or does only partly. Nothi
 ## Play mode and imports
 
 - **PSARC archives:** unencrypted archives are read fully in the browser (zlib, LZMA or stored blocks; manifest, name-hash and layout checks). **Rocksmith 2014 archives encrypt their table of contents** (flag 0x4); the importer reads and reports the header and compression, and marks the table of contents as unsupported and the block table, manifest and data as unreachable. It does not decrypt game files. Import the song's arrangement XMLs with its OGG/WAV audio instead.
-- Inside readable archives, these are listed but not used: `.sng` charts (encrypted per file in Rocksmith 2014), Wwise audio (`.wem`) and sound banks (`.bnk`), which browsers cannot decode, vocals/lyrics and showlights XML, artwork, and game data. Each appears in the import report with its reason.
+- Inside readable archives, these are listed but not used: `.sng` charts (encrypted per file in Rocksmith 2014), Wwise sound banks (`.bnk`), Wwise Vorbis/Opus audio (`.wem`, the codec Rocksmith 2014 uses; PCM and IMA ADPCM `.wem` files are converted to WAV), vocals/lyrics and showlights XML, artwork, and game data. Each appears in the import report with its reason.
 - Automatic sync confirms or corrects the chart-to-recording offset within ±8 s from note onsets. A strictly repetitive part can fit equally well one beat away; the importer then says the result is ambiguous and the offset should be checked by ear. It does not stretch the timing for recordings of a different tempo or version.
 - OGG Vorbis playback depends on the browser (older Safari cannot decode it); WAV works everywhere.
 - Guitar Pro 3–6 (.gp3/.gp4/.gp5/.gpx) are not imported; save as Guitar Pro 7/8 (.gp). Only the first voice of one track is used; tuplets beyond simple ratios, grace notes, and some techniques (whammy, rasgueado) are ignored.
@@ -45,3 +45,6 @@ An honest list of what the current build does not do, or does only partly. Nothi
 - Requires a modern browser with Web Audio and, for the microphone, HTTPS (or localhost).
 - The JavaScript bundle is about 930 KB minified (≈285 KB gzipped) because all 80 lessons ship with the app; route-level code splitting is a possible optimisation.
 - Offline use works after the first load only while the page stays open; there is no service worker yet.
+
+### Wwise Vorbis audio (.wem)
+Rocksmith 2014 stores its audio as Wwise Vorbis. That format leaves the Vorbis codebooks out of the file and expects an external codebook table (aoTuV 6.03), which is not included in this app, so these files cannot be decoded in the browser. The import report says so for each file. Convert them first (`vgmstream-cli song.wem -o song.wav`, ww2ogg with `packed_codebooks_aoTuV_603.bin` then revorb, or the Custom Song Toolkit) and import the WAV or OGG. PCM and IMA ADPCM `.wem` files are converted automatically.

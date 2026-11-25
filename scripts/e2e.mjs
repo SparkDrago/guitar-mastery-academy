@@ -641,6 +641,43 @@ test('importer: loose XML + WAV files, duplicate detection, Play mode run', asyn
   expect(page.errors.length === 0, page.errors.join('\n'));
 });
 
+test('wwise .wem audio: IMA ADPCM converts on import, PCM attaches in Play mode, Vorbis is explained', async (b) => {
+  const { encodeWwiseIma, wem } = await import('../tests/helpers/wem-builder.ts');
+  const { riffWave } = await import('../tests/helpers/psarc-builder.ts');
+  const rec = demoRecording(0);
+  const pcm = new Int16Array(rec.buffer.slice(rec.byteOffset + 44, rec.byteOffset + rec.length));
+  const imaWem = Buffer.from(wem(2, 1, 36, 4, encodeWwiseIma([pcm], 36), { sampleRate: 22050 }));
+  const page = await newPage(b);
+  await importFiles(page, [
+    { name: 'demo_lead.xml', mimeType: 'text/xml', buffer: Buffer.from(arrangementXml('Lead')) },
+    { name: '555123.wem', mimeType: 'application/octet-stream', buffer: imaWem },
+  ]);
+  await page.getByTestId('import-preview').waitFor({ timeout: 20000 });
+  expect((await page.getByTestId('import-audio').locator('option:checked').textContent()) === '555123.wav', 'converted .wem chosen as the song audio');
+  await page.waitForFunction(() => /\d/.test(document.querySelector('[data-testid=import-sync]')?.textContent ?? ''), null, { timeout: 15000 });
+  const offset = Number(await page.getByTestId('import-offset').inputValue());
+  expect(Math.abs(offset) < 0.02, `decoded ADPCM lines up with the chart (offset ${offset})`);
+  expect((await page.getByTestId('import-files-report').textContent()).includes('Wwise IMA ADPCM converted to WAV'), 'report names the conversion');
+  await page.getByTestId('import-save').click();
+  await page.getByTestId('import-open-play').click();
+  // Play mode: a Vorbis .wem is refused with an explanation; a PCM .wem attaches as WAV.
+  await page.getByTestId('play-audio').setInputFiles({ name: 'vorbis.wem', mimeType: 'application/octet-stream', buffer: Buffer.from(riffWave(0xffff)) });
+  await page.getByText('This .wem file cannot be used').waitFor({ timeout: 5000 });
+  const pcmWem = Buffer.from(wem(1, 1, 2, 16, new Uint8Array(pcm.buffer.slice(0)), { sampleRate: 22050 }));
+  await page.getByTestId('play-audio').setInputFiles({ name: 'take.wem', mimeType: 'application/octet-stream', buffer: pcmWem });
+  await page.getByText('take.wav', { exact: true }).waitFor({ timeout: 5000 });
+  const recs = await libraryRecords(page);
+  expect(recs[0].audio?.name === 'take.wav' && recs[0].audio?.type === 'audio/wav', 'stored as WAV');
+  const sw = page.getByRole('switch', { name: 'Score with the microphone' });
+  if ((await sw.getAttribute('aria-checked')) === 'true') await sw.click();
+  await page.getByTestId('play-start').click();
+  await page.getByTestId('play-canvas').waitFor();
+  await page.waitForTimeout(2500);
+  expect(await canvasInk(page, 'play-canvas') > 20, 'plays with the converted recording');
+  await page.getByTestId('play-exit').click();
+  expect(page.errors.length === 0, page.errors.join('\n'));
+});
+
 test('importer: encrypted and damaged archives report which component is blocking', async (b) => {
   const page = await newPage(b);
   const files = [

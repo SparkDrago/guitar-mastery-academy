@@ -10,7 +10,8 @@
 import { gpTracks, gpifFromGpFile, songFromGpif, songFromRocksmithXml, validateSong, type PlaySong } from '@gma/notation';
 import { ArchiveError, findArchiveHandler, type OpenedArchive } from './archives';
 import { blobFingerprint, ImportAborted, readExact, sha256Hex, throwIfAborted, type ByteSource } from './bytes';
-import { classify, roleSummary, SNIFF_BYTES, type Classification } from './classify';
+import { classify, isPreviewAudio, roleSummary, SNIFF_BYTES, type Classification } from './classify';
+import { convertWem, WemUnsupportedError } from './wem';
 import { groupSongs, type ArrangementItem, type AudioItem, type MetaHint, type SongDraft } from './grouping';
 import { guessFromFileName, metaFromArrangementXml, metaFromManifest } from './metadata';
 import { checkArchivePath } from './paths';
@@ -193,7 +194,7 @@ async function importArchive(
     let ecls = classify(e.path, new Uint8Array(0));
     const cache: { bytes: Uint8Array | null } = { bytes: null };
     const getBytes = async () => (cache.bytes ??= await e.read(o.signal));
-    const wanted = (r: string) => ['arrangement-xml', 'rs-manifest', 'rs-hsan', 'gma-song', 'json', 'other-xml', 'audio', 'guitar-pro', 'unknown'].includes(r);
+    const wanted = (r: string) => ['arrangement-xml', 'rs-manifest', 'rs-hsan', 'gma-song', 'json', 'other-xml', 'audio', 'wwise-audio', 'guitar-pro', 'unknown'].includes(r);
     try {
       if (wanted(ecls.role) && !(ecls.role === 'unknown' && e.size > 1024 * 1024)) {
         const b = await getBytes();
@@ -314,6 +315,23 @@ async function handleItem(it: Item, cls: Classification, c: Collect, signal?: Ab
         container: a.container, mime: a.mime, preview: a.preview, blob: typed, fingerprint: await blobFingerprint(typed),
       });
       return { status: 'imported', detail: `${cls.kind}${a.preview ? ' (preview clip)' : ''}, ${(blob.size / 1024 / 1024).toFixed(1)} MiB.` };
+    }
+    case 'wwise-audio': {
+      let converted;
+      try {
+        converted = convertWem(await it.bytes());
+      } catch (e) {
+        if (e instanceof WemUnsupportedError) return { status: 'unsupported', detail: e.message };
+        throw e;
+      }
+      const preview = isPreviewAudio(it.name);
+      const name = it.name.replace(/\.wem$/i, '') + '.wav';
+      const blob = new Blob([converted.bytes as BlobPart], { type: converted.mime });
+      c.audio.push({
+        key: `au${++c.seq}`, name, path: it.path, origin: it.origin, scope: it.scope, size: blob.size,
+        container: converted.container, mime: converted.mime, preview, blob, fingerprint: await blobFingerprint(blob),
+      });
+      return { status: 'imported', detail: `${converted.codec} converted to WAV${preview ? ' (preview clip)' : ''}, ${(blob.size / 1024 / 1024).toFixed(1)} MiB.` };
     }
     default: {
       const s = roleSummary(cls.role);
