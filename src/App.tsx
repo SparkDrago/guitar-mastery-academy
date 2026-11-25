@@ -16,6 +16,9 @@ import { ImprovisationPage, JamPage } from '@/pages/Jam';
 import { ProgressPage } from '@/pages/Progress';
 import { AccountPage, SettingsPage } from '@/pages/Settings';
 import { TheoryPage } from '@/pages/Theory';
+import { ChordFinderPage } from '@/pages/ChordFinder';
+import { PlayPage } from '@/pages/Play';
+import { ImportPage } from '@/pages/Import';
 
 const ROUTES: { path: string; render: (params: Record<string, string>) => ReactNode; label: string }[] = [
   { path: '/', render: () => <DashboardPage />, label: 'Dashboard' },
@@ -28,6 +31,7 @@ const ROUTES: { path: string; render: (params: Record<string, string>) => ReactN
   { path: '/fretboard', render: () => <FretboardPage />, label: 'Fretboard' },
   { path: '/scales', render: () => <ScalesPage />, label: 'Scales' },
   { path: '/chords', render: () => <ChordsPage />, label: 'Chords' },
+  { path: '/chord-finder', render: () => <ChordFinderPage />, label: 'Chord Finder' },
   { path: '/practice', render: () => <PracticePage />, label: 'Practice Studio' },
   { path: '/technique-lab', render: () => <TechniqueLabPage />, label: 'Technique Lab' },
   { path: '/fretboard-trainer', render: () => <FretboardTrainerPage />, label: 'Fretboard Trainer' },
@@ -36,6 +40,8 @@ const ROUTES: { path: string; render: (params: Record<string, string>) => ReactN
   { path: '/tab-editor', render: () => <TabEditorPage />, label: 'Tab Editor' },
   { path: '/improvisation', render: () => <ImprovisationPage />, label: 'Improvisation' },
   { path: '/jam', render: () => <JamPage />, label: 'Jam Room' },
+  { path: '/play', render: () => <PlayPage />, label: 'Play Mode' },
+  { path: '/import', render: () => <ImportPage />, label: 'Import Songs' },
   { path: '/progress', render: () => <ProgressPage />, label: 'Progress' },
   { path: '/settings', render: () => <SettingsPage />, label: 'Settings' },
   { path: '/account', render: () => <AccountPage />, label: 'Account' },

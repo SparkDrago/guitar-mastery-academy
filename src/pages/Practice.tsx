@@ -1,6 +1,6 @@
 /** Practice Studio (intelligent scheduler + session runner) and Technique Lab. */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { LuPlay, LuPause, LuCheck, LuSkipForward, LuCoffee, LuSave, LuArrowRight, LuSquare, LuAudioLines, LuVolume2, LuFlag } from 'react-icons/lu';
+import { LuPlay, LuPause, LuCheck, LuSkipForward, LuCoffee, LuSave, LuArrowRight, LuSquare, LuAudioLines, LuGamepad2, LuVolume2, LuFlag } from 'react-icons/lu';
 import {
   CATEGORIES, DURATION_PRESETS, buildRoutine, bpmProgress, nextBpm, practiceSummary, weaknesses,
   type Category, type ExerciseRecord, type PracticeBlock, type Routine, type TechniqueId,
@@ -261,7 +261,7 @@ export function TechniqueLabPage() {
         </Card>
         <div className="min-w-0 space-y-5">
           <Card title={ex.name} subtitle={`${TECH_LABELS[ex.technique]} · difficulty ${ex.difficulty}/5 · ${ex.reps} reps · ${ex.minutes} min`}
-            action={<div className="flex gap-2"><Button size="sm" onClick={play}>{playing ? <><LuSquare size={14} /> Stop</> : <><LuVolume2 size={14} /> Hear it</>}</Button>{ex.analyzable && <Button size="sm" onClick={() => navigate(`/analyzer?exercise=${ex.id}`)}><LuAudioLines size={14} /> Analyse</Button>}</div>}>
+            action={<div className="flex gap-2"><Button size="sm" onClick={play}>{playing ? <><LuSquare size={14} /> Stop</> : <><LuVolume2 size={14} /> Hear it</>}</Button>{ex.analyzable && <Button size="sm" onClick={() => navigate(`/analyzer?exercise=${ex.id}`)}><LuAudioLines size={14} /> Analyse</Button>}<Button size="sm" onClick={() => navigate(`/play?exercise=${ex.id}`)}><LuGamepad2 size={14} /> Play mode</Button></div>}>
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="rounded-lg bg-ink-900 p-3"><div className="label">Start</div><div className="text-xl font-semibold tabular-nums">{ex.bpmStart} <span className="text-xs text-ink-400">bpm</span></div></div>
               <div className="rounded-lg bg-ink-900 p-3"><div className="label">Target</div><div className="text-xl font-semibold tabular-nums">{ex.bpmTarget} <span className="text-xs text-ink-400">bpm</span></div></div>

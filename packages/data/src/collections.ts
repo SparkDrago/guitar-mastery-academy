@@ -94,8 +94,8 @@ export const COLLECTIONS: { [K in CollectionName]: CollectionSpec<any> } = {
   exerciseRecords: {
     name: 'exerciseRecords', shape: 'list', appendOnly: true, table: 'exercise_records', conflictColumns: 'user_id,id', cap: 3000,
     idOf: (e: ExerciseRecord) => e.id, updatedOf: (e: ExerciseRecord) => e.updatedAt,
-    toRow: (e: ExerciseRecord, userId) => ({ id: e.id, user_id: userId, exercise_id: e.exerciseId, recorded_at: e.at, bpm: e.bpm, clean: e.clean, rating: e.rating ?? null, source: e.source, analyzer: e.analyzer ?? null, updated_at: e.updatedAt }),
-    fromRow: (r): ExerciseRecord => ({ id: String(r.id), exerciseId: String(r.exercise_id), at: iso(r.recorded_at)!, bpm: Number(r.bpm), clean: !!r.clean, rating: r.rating == null ? undefined : (Number(r.rating) as 1), source: r.source as 'manual', analyzer: (r.analyzer as ExerciseRecord['analyzer']) ?? undefined, updatedAt: iso(r.updated_at)! }),
+    toRow: (e: ExerciseRecord, userId) => ({ id: e.id, user_id: userId, exercise_id: e.exerciseId, recorded_at: e.at, bpm: e.bpm, clean: e.clean, rating: e.rating ?? null, source: e.source, analyzer: e.analyzer ?? null, play: e.play ?? null, updated_at: e.updatedAt }),
+    fromRow: (r): ExerciseRecord => ({ id: String(r.id), exerciseId: String(r.exercise_id), at: iso(r.recorded_at)!, bpm: Number(r.bpm), clean: !!r.clean, rating: r.rating == null ? undefined : (Number(r.rating) as 1), source: r.source as ExerciseRecord['source'], analyzer: (r.analyzer as ExerciseRecord['analyzer']) ?? undefined, play: (r.play as ExerciseRecord['play']) ?? undefined, updatedAt: iso(r.updated_at)! }),
   },
   trainer: {
     name: 'trainer', shape: 'list', appendOnly: true, table: 'trainer_attempts', conflictColumns: 'user_id,id', cap: 5000,

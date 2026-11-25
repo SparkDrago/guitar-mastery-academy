@@ -80,6 +80,21 @@ async function buildAll() {
   const config = loadEnv();
   fs.rmSync(dist, { recursive: true, force: true });
   fs.mkdirSync(path.join(dist, 'assets'), { recursive: true });
+  // The import worker is its own bundle; the app learns its hashed URL at build time.
+  const workerBuild = await esbuild.build({
+    entryPoints: [path.join(root, 'src/workers/import.worker.ts')],
+    bundle: true,
+    format: 'iife',
+    target: ['es2020', 'chrome90', 'safari15', 'firefox90'],
+    minify: production,
+    sourcemap: production ? false : 'inline',
+    write: false,
+    tsconfig: path.join(root, 'tsconfig.json'),
+    logLevel: 'warning',
+  });
+  const workerJs = workerBuild.outputFiles[0].text;
+  const workerName = `assets/import-worker-${hash(workerJs)}.js`;
+  fs.writeFileSync(path.join(dist, workerName), workerJs);
   const result = await esbuild.build({
     entryPoints: [path.join(root, 'src/main.tsx')],
     bundle: true,
@@ -93,6 +108,7 @@ async function buildAll() {
     define: {
       'process.env.NODE_ENV': JSON.stringify(production ? 'production' : 'development'),
       __GMA_CONFIG__: JSON.stringify(config),
+      __GMA_IMPORT_WORKER__: JSON.stringify(`/${workerName}`),
     },
     logLevel: 'warning',
   });
@@ -107,7 +123,7 @@ async function buildAll() {
   const pub = path.join(root, 'public');
   if (fs.existsSync(pub)) fs.cpSync(pub, dist, { recursive: true });
   const kb = (n) => `${(n / 1024).toFixed(0)} kB`;
-  console.log(`built in ${Date.now() - started} ms: ${jsName} (${kb(js.length)}), ${cssName} (${kb(css.length)})${config.supabaseUrl ? ', Supabase configured' : ', local-only mode (no Supabase env)'}`);
+  console.log(`built in ${Date.now() - started} ms: ${jsName} (${kb(js.length)}), ${workerName} (${kb(workerJs.length)}), ${cssName} (${kb(css.length)})${config.supabaseUrl ? ', Supabase configured' : ', local-only mode (no Supabase env)'}`);
 }
 
 await buildAll();

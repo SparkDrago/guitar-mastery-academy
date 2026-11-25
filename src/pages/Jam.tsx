@@ -4,17 +4,17 @@
  * theory panel and fretboard follow the chord that is actually sounding.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { LuPlay, LuSquare, LuLock, LuTarget, LuMusic, LuCircleCheck, LuShuffle, LuVolume2 } from 'react-icons/lu';
+import { LuPlay, LuSquare, LuLock, LuTarget, LuMusic, LuCircleCheck, LuShuffle, LuVolume2, LuMic } from 'react-icons/lu';
 import {
-  KEY_ROOTS_MAJOR, KEY_ROOTS_MINOR, PROGRESSIONS, buildScale, diatonicChords, markTones, midiAt, noteName, noteOverChord, numeralToChord, pcOf, resolveProgression,
+  KEY_ROOTS_MAJOR, KEY_ROOTS_MINOR, PROGRESSIONS, buildScale, diatonicChords, markTones, midiAt, noteName, noteOverChord, numeralToChord, pcName, pcOf, resolveProgression,
   type ResolvedChord,
 } from '@gma/theory';
-import { JAM_STYLES, arrange, getStyle, type ChordSlot } from '@gma/audio';
-import { CHALLENGES, buildChallenge, chordView, unlockedChallenges } from '@gma/learning';
+import { JAM_STYLES, arrange, getStyle, yin, type ChordSlot } from '@gma/audio';
+import { CHALLENGES, SessionFollower, buildChallenge, chordView, unlockedChallenges, type SessionState } from '@gma/learning';
 import { useActiveTuning, useStudent } from '@/lib/hooks';
 import { store } from '@/lib/store';
 import { cx, fmtMinutes, nowIso, uid } from '@/lib/core';
-import { BackingPlayer, getContext, pluck, type Tone } from '@/lib/audio';
+import { BackingPlayer, MicInput, getContext, micErrorMessage, pluck, type MicError, type Tone } from '@/lib/audio';
 import { useDocumentTitle, useLocation, Link } from '@/lib/router';
 import { Badge, Button, Callout, Card, Field, PageHeader, Segmented, Select, Stepper, Toggle } from '@/components/ui';
 import { Fretboard, type FretMark } from '@/components/music';
@@ -58,6 +58,13 @@ export function JamPage() {
   const [density, setDensity] = useState<1 | 2 | 3>(2);
   const [maxMin, setMaxMin] = useState(0);
   const [mutes, setMutes] = useState({ drums: false, bass: false, chords: false });
+  // Session mode: the band follows the player's intensity through the microphone.
+  const [sessionOn, setSessionOn] = useState(false);
+  const [session, setSession] = useState<SessionState | null>(null);
+  const [sessionErr, setSessionErr] = useState<MicError | null>(null);
+  const [trail, setTrail] = useState<{ pc: number; role: 'chord tone' | 'tension' | 'avoid'; inScale: boolean; id: number }[]>([]);
+  const [sessionCounts, setSessionCounts] = useState({ notes: 0, chordTones: 0, inScale: 0 });
+  const live = useRef<{ chordPcs: number[]; scalePcs: number[]; rootPc: number; chord: ResolvedChord | null }>({ chordPcs: [], scalePcs: [], rootPc: 0, chord: null });
   const [viz, setViz] = useState<Viz>('both');
   const [scaleChoice, setScaleChoice] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -88,7 +95,8 @@ export function JamPage() {
 
   // Keep the player in step with every control change, even while it is playing.
   useEffect(() => { player.current?.setEvents(events, loopBeats || 4); }, [events, loopBeats]);
-  useEffect(() => { player.current?.setOptions({ bpm, mutes, tone: style.tone as Tone, maxSeconds: maxMin * 60 }); }, [bpm, mutes, style.tone, maxMin]);
+  const effectiveMutes = sessionOn && session?.waiting ? { ...mutes, chords: true } : mutes;
+  useEffect(() => { player.current?.setOptions({ bpm, mutes: effectiveMutes, tone: style.tone as Tone, maxSeconds: maxMin * 60 }); }, [bpm, effectiveMutes.drums, effectiveMutes.bass, effectiveMutes.chords, style.tone, maxMin]);
   useEffect(() => { setBpm(Math.min(style.bpmRange[1], Math.max(style.bpmRange[0], bpm))); }, [styleId]);
   useEffect(() => () => player.current?.stop(), []);
 
@@ -109,6 +117,52 @@ export function JamPage() {
   const next = chords[(curIdx + 1) % Math.max(1, chords.length)];
   const view = useMemo(() => (cur ? chordView(cur, key, mode) : null), [cur, key, mode]);
   const nextView = useMemo(() => (next ? chordView(next, key, mode) : null), [next, key, mode]);
+
+  // Keep what the session listener compares against up to date.
+  useEffect(() => {
+    if (!cur || !view) return;
+    const sug = view.suggestions[Math.min(scaleChoice, view.suggestions.length - 1)];
+    live.current = { chordPcs: cur.chord.pcs, scalePcs: sug ? buildScale(sug.root, sug.scaleId).pcs : cur.chord.pcs, rootPc: pcOf(cur.chord.root), chord: cur };
+  }, [cur, view, scaleChoice]);
+
+  useEffect(() => {
+    if (!sessionOn || !playing) { setSession(null); return; }
+    const mic = new MicInput();
+    const follower = new SessionFollower({ waitAfter: Math.max(3, (beatsPerBar * 2 * 60) / bpm) });
+    let id: ReturnType<typeof setInterval> | null = null;
+    let lastMidi: number | null = null, stable = 0, lastAdded = -1, seq = 0;
+    void mic.start(4096).then((r) => {
+      if (!r.ok) { setSessionErr(r.error); setSessionOn(false); return; }
+      setSessionErr(null);
+      const t0 = performance.now();
+      id = setInterval(() => {
+        const buf = mic.read();
+        if (!buf) return;
+        const frame = buf.subarray(buf.length - 2048);
+        let sum = 0;
+        for (let i = 0; i < frame.length; i++) sum += frame[i] * frame[i];
+        const level = Math.sqrt(sum / frame.length);
+        const st = follower.update({ time: (performance.now() - t0) / 1000, level });
+        setSession(st);
+        setDensity((d) => (d === st.density ? d : st.density));
+        const est = level > 0.006 ? yin(frame, mic.sampleRate, { minFreq: 70, maxFreq: 1300 }) : null;
+        const midi = est && est.probability > 0.8 ? Math.round(69 + 12 * Math.log2(est.freq / s.profile.a4)) : null;
+        stable = midi !== null && midi === lastMidi ? stable + 1 : 0;
+        lastMidi = midi;
+        if (midi !== null && stable === 1 && (midi !== lastAdded || st.onset)) {
+          lastAdded = midi;
+          const pc = ((midi % 12) + 12) % 12;
+          const L = live.current;
+          if (!L.chord) return;
+          const role = noteOverChord(pc, L.chord.chord).role;
+          const inScale = L.scalePcs.includes(pc);
+          setTrail((tr) => [...tr.slice(-15), { pc, role, inScale, id: ++seq }]);
+          setSessionCounts((c) => ({ notes: c.notes + 1, chordTones: c.chordTones + (role === 'chord tone' ? 1 : 0), inScale: c.inScale + (inScale ? 1 : 0) }));
+        }
+      }, 50);
+    });
+    return () => { if (id) clearInterval(id); mic.stop(); };
+  }, [sessionOn, playing]);
 
   const start = () => {
     if (!slots.length) return;
@@ -177,6 +231,13 @@ export function JamPage() {
     return sm.map((m) => ({ string: m.string, fret: m.fret, tone: viz === 'both' && chordPcs.has(m.pc) ? (m.pc === rootPc ? 'root' : 'chord') : m.isRoot ? 'root' : 'tone', label: m.token }));
   }, [cur, next, view, viz, tuning, scaleChoice]);
 
+  // In session mode, flash every position of the note just played.
+  const lastNote = sessionOn && playing ? trail[trail.length - 1] : undefined;
+  const liveMarks: FretMark[] = lastNote ? [
+    ...marks.filter((mk) => midiAt(tuning, mk.string, mk.fret) % 12 !== lastNote.pc),
+    ...tuning.strings.flatMap((_, st) => Array.from({ length: 16 }, (_, f) => f).filter((f) => midiAt(tuning, st, f) % 12 === lastNote.pc).map((f) => ({ string: st, fret: f, tone: 'focus' as const, label: pcName(lastNote.pc, s.profile.noteNames === 'flats') }))),
+  ] : marks;
+
   const keyRoots = mode === 'major' ? KEY_ROOTS_MAJOR : KEY_ROOTS_MINOR;
   const elapsed = startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0;
 
@@ -201,7 +262,7 @@ export function JamPage() {
                 <Select value={useCustom ? 'custom' : progId} onChange={(v) => { if (v === 'custom') setUseCustom(true); else { setUseCustom(false); setProgId(v); const p = PROGRESSIONS.find((x) => x.id === v); if (p && p.mode !== mode) { setMode(p.mode); setKey(p.mode === 'major' ? 'C' : 'A'); } } }}
                   options={[...PROGRESSIONS.map((p) => ({ value: p.id, label: p.name, group: p.mode === 'major' ? 'Major-key' : 'Minor-key' })), { value: 'custom', label: 'Custom…', group: 'Your own' }]} aria-label="Progression" data-testid="jam-progression" />
               </Field>
-              <Field label="Feel"><Segmented size="sm" value={String(density) as '1' | '2' | '3'} onChange={(v) => setDensity(Number(v) as 1 | 2 | 3)} options={[{ value: '1', label: 'Sparse' }, { value: '2', label: 'Normal' }, { value: '3', label: 'Busy' }]} aria-label="Density" /></Field>
+              <Field label="Feel">{sessionOn ? <span className="py-1.5 text-sm text-ink-200">Follows you ({['', 'sparse', 'normal', 'busy'][density]})</span> : <Segmented size="sm" value={String(density) as '1' | '2' | '3'} onChange={(v) => setDensity(Number(v) as 1 | 2 | 3)} options={[{ value: '1', label: 'Sparse' }, { value: '2', label: 'Normal' }, { value: '3', label: 'Busy' }]} aria-label="Density" />}</Field>
               <Field label="Mix"><div className="flex flex-wrap gap-3">
                 {(['drums', 'bass', 'chords'] as const).map((k) => <Toggle key={k} checked={!mutes[k]} onChange={(v) => setMutes({ ...mutes, [k]: !v })} label={k[0].toUpperCase() + k.slice(1)} />)}
               </div></Field>
@@ -229,12 +290,43 @@ export function JamPage() {
 
           <Card title="Fretboard" subtitle={cur ? `Following ${cur.chord.symbol}${viz === 'next' && next ? ` → showing next chord ${next.chord.symbol}` : ''}` : undefined}
             action={<Segmented size="sm" value={viz} onChange={setViz} aria-label="Fretboard view" options={[{ value: 'chord', label: 'Chord tones' }, { value: 'scale', label: 'Scale' }, { value: 'both', label: 'Scale + chord' }, { value: 'guide', label: 'Guide tones' }, { value: 'next', label: 'Next chord' }]} />}>
-            <Fretboard tuning={tuning} maxFret={15} marks={marks} leftHanded={s.profile.leftHanded} testId="jam-fretboard" />
+            <Fretboard tuning={tuning} maxFret={15} marks={liveMarks} leftHanded={s.profile.leftHanded} testId="jam-fretboard" />
             <p className="mt-2 text-xs text-ink-400">Labels are intervals from each note's root. Purple = root, blue = chord tone, orange = target, grey = other scale tones.</p>
           </Card>
         </div>
 
         <div className="space-y-5">
+          <Card title="Session mode" subtitle="The band listens and follows you: play busier and louder and it builds up; play sparsely and it thins out; stop and it waits." data-testid="jam-session"
+            action={<Toggle checked={sessionOn} onChange={(v) => { setSessionOn(v); if (v) { setTrail([]); setSessionCounts({ notes: 0, chordTones: 0, inScale: 0 }); } }} label="On" />}>
+            {sessionErr && <Callout tone="warn" title="Microphone unavailable">{micErrorMessage(sessionErr)}</Callout>}
+            {!sessionOn ? <p className="text-sm text-ink-300">Turn on, press Play backing and start playing. Uses the microphone; nothing is recorded.</p>
+              : !playing ? <p className="text-sm text-ink-300">Press <b>Play backing</b> to start the session.</p>
+              : (
+                <div className="space-y-4">
+                  <div>
+                    <div className="mb-1.5 flex items-center justify-between text-xs"><span className="inline-flex items-center gap-1.5 text-ink-300"><LuMic size={12} className={session?.waiting ? 'text-warn-400' : 'text-ok-400'} />{session?.waiting ? 'Band is waiting for you' : 'Listening'}</span><span className="font-medium text-ink-100">{['', 'Sparse', 'Normal', 'Busy'][density]}</span></div>
+                    <div className="h-2 overflow-hidden rounded-full bg-ink-950"><div className="h-full rounded-full transition-[width] duration-300" style={{ width: `${Math.round((session?.intensity ?? 0) * 100)}%`, background: 'var(--color-viz-1)' }} /></div>
+                    <div className="mt-1 text-[11px] text-ink-400">{session ? `${session.notesPerSecond.toFixed(1)} notes/s` : '—'}</div>
+                  </div>
+                  <div>
+                    <div className="label mb-1.5">Your notes</div>
+                    <div className="flex min-h-8 flex-wrap gap-1" aria-live="polite" data-testid="jam-trail">
+                      {trail.length === 0 ? <span className="text-xs text-ink-400">Play single notes to see how they fit.</span> : trail.map((n) => (
+                        <span key={n.id} title={n.role} className={cx('rounded-md px-1.5 py-0.5 text-xs font-medium', n.role === 'chord tone' ? 'bg-ok-500/20 text-ok-400' : n.inScale ? 'bg-accent-500/15 text-accent-300' : 'bg-bad-400/15 text-bad-400')}>{pcName(n.pc, s.profile.noteNames === 'flats')}</span>
+                      ))}
+                    </div>
+                    <p className="mt-1.5 text-[11px] text-ink-400">Green = chord tone of the current chord, purple = in the chosen scale, red = outside.</p>
+                  </div>
+                  {sessionCounts.notes > 0 && (
+                    <div className="grid grid-cols-3 gap-2 text-center">
+                      <div className="rounded-lg bg-ink-800 py-2"><div className="text-lg font-semibold tabular-nums text-ink-50">{sessionCounts.notes}</div><div className="text-[10px] text-ink-400">notes</div></div>
+                      <div className="rounded-lg bg-ink-800 py-2"><div className="text-lg font-semibold tabular-nums text-ink-50">{Math.round((sessionCounts.inScale / sessionCounts.notes) * 100)}%</div><div className="text-[10px] text-ink-400">in scale</div></div>
+                      <div className="rounded-lg bg-ink-800 py-2"><div className="text-lg font-semibold tabular-nums text-ink-50">{Math.round((sessionCounts.chordTones / sessionCounts.notes) * 100)}%</div><div className="text-[10px] text-ink-400">chord tones</div></div>
+                    </div>
+                  )}
+                </div>
+              )}
+          </Card>
           {view && (
             <Card title={<span className="flex items-center gap-2">{view.symbol} <Badge tone="accent">{view.numeral}</Badge>{!view.inKey && <Badge tone="warn">outside the key</Badge>}</span>} subtitle={next && nextView ? `Next: ${nextView.symbol} (${nextView.numeral})` : undefined} data-testid="jam-theory">
               <dl className="space-y-3 text-sm">

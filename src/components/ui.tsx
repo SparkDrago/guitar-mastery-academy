@@ -99,7 +99,7 @@ export function Select<T extends string>({ value, onChange, options, className, 
   );
 }
 
-export function Segmented<T extends string>({ value, onChange, options, size = 'md', ...rest }: { value: T; onChange: (v: T) => void; options: { value: T; label: ReactNode }[]; size?: 'sm' | 'md'; 'aria-label'?: string }) {
+export function Segmented<T extends string>({ value, onChange, options, size = 'md', ...rest }: { value: T; onChange: (v: T) => void; options: { value: T; label: ReactNode }[]; size?: 'sm' | 'md'; 'aria-label'?: string; 'data-testid'?: string }) {
   return (
     <div role="radiogroup" className="inline-flex flex-wrap gap-0.5 rounded-xl bg-ink-900 p-1" {...rest}>
       {options.map((o) => (

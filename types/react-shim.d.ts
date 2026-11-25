@@ -28,6 +28,7 @@ declare module 'react' {
   export interface PointerEvent<T = Element> extends MouseEvent<T> { pointerId: number; pointerType: string }
   export interface KeyboardEvent<T = Element> extends SyntheticEvent<T> { key: string; code: string; shiftKey: boolean; metaKey: boolean; ctrlKey: boolean; altKey: boolean; repeat: boolean }
   export interface FocusEvent<T = Element> extends SyntheticEvent<T> {}
+  export interface DragEvent<T = Element> extends MouseEvent<T> { dataTransfer: DataTransfer }
 
   export function useState<S>(initial: S | (() => S)): [S, Dispatch<SetStateAction<S>>];
   export function useState<S = undefined>(): [S | undefined, Dispatch<SetStateAction<S | undefined>>];
@@ -92,6 +93,10 @@ declare module 'react/jsx-runtime' {
     onKeyUp?(e: import('react').KeyboardEvent<T>): void;
     onFocus?(e: import('react').FocusEvent<T>): void;
     onBlur?(e: import('react').FocusEvent<T>): void;
+    onDragEnter?(e: import('react').DragEvent<T>): void;
+    onDragOver?(e: import('react').DragEvent<T>): void;
+    onDragLeave?(e: import('react').DragEvent<T>): void;
+    onDrop?(e: import('react').DragEvent<T>): void;
   }
   export namespace JSX {
     type Element = import('react').ReactElement;
@@ -121,6 +126,17 @@ declare module 'react-icons/lu' {
   type Icon = FC<{ size?: number | string; className?: string; title?: string; 'aria-hidden'?: boolean | 'true' | 'false'; strokeWidth?: number; style?: Record<string, string | number> }>;
   export const LuGauge: Icon;
   export const LuMusic: Icon;
+  export const LuFolderOpen: Icon;
+  export const LuLayers2: Icon;
+  export const LuImport: Icon;
+  export const LuFileArchive: Icon;
+  export const LuCircleX: Icon;
+  export const LuCircleMinus: Icon;
+  export const LuCircleDashed: Icon;
+  export const LuLoaderCircle: Icon;
+  export const LuPackage: Icon;
+  export const LuSkipBack: Icon;
+  export const LuAudioWaveform: Icon;
   export const LuGuitar: Icon;
   export const LuLayoutDashboard: Icon;
   export const LuBookOpen: Icon;
@@ -160,6 +176,10 @@ declare module 'react-icons/lu' {
   export const LuZap: Icon;
   export const LuFileText: Icon;
   export const LuBell: Icon;
+  export const LuMaximize: Icon;
+  export const LuGamepad2: Icon;
+  export const LuScanSearch: Icon;
+  export const LuEraser: Icon;
   export const LuTrendingUp: Icon;
   export const LuTrendingDown: Icon;
   export const LuKeyRound: Icon;
