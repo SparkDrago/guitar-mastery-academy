@@ -13,7 +13,7 @@
  */
 import { child, children, num, parseXml, textOf, type XmlNode } from './xml';
 import type { Technique } from './model';
-import type { PlaySong, SongEvent, SongNote } from './song';
+import type { PlaySong, SongEvent, SongNote, SongShape } from './song';
 
 const GUITAR_STD = [40, 45, 50, 55, 59, 64];
 const BASS_STD = [28, 33, 38, 43];
@@ -49,7 +49,7 @@ function noteOf(n: XmlNode): SongNote {
   };
 }
 
-interface LevelData { notes: XmlNode[]; chords: XmlNode[] }
+interface LevelData { notes: XmlNode[]; chords: XmlNode[]; shapes: XmlNode[] }
 
 export interface RocksmithImport {
   song: PlaySong | null;
@@ -75,32 +75,34 @@ export function songFromRocksmithXml(text: string, id: string): RocksmithImport 
 
   const templates = children(child(root, 'chordTemplates'), 'chordTemplate').map((c) => ({
     name: (c.attrs.displayName || c.attrs.chordName || '').replace(/-(arp|nop)$/i, ''),
+    arpeggio: /-arp$/i.test(c.attrs.displayName ?? ''),
     frets: base.map((_, i) => { const f = num(c.attrs[`fret${i}`], -1); return f >= 0 ? f : null; }),
   }));
 
   // Choose the notes that make up the full arrangement.
-  let data: LevelData = { notes: [], chords: [] };
+  let data: LevelData = { notes: [], chords: [], shapes: [] };
   const transcription = child(root, 'transcriptionTrack');
   const tNotes = children(child(transcription, 'notes'), 'note');
   const tChords = children(child(transcription, 'chords'), 'chord');
-  if (tNotes.length + tChords.length > 0) data = { notes: tNotes, chords: tChords };
+  if (tNotes.length + tChords.length > 0) data = { notes: tNotes, chords: tChords, shapes: children(child(transcription, 'handShapes'), 'handShape') };
   else {
-    const levels = children(child(root, 'levels'), 'level').map((l) => ({ d: num(l.attrs.difficulty), notes: children(child(l, 'notes'), 'note'), chords: children(child(l, 'chords'), 'chord') }));
+    const levels = children(child(root, 'levels'), 'level').map((l) => ({ d: num(l.attrs.difficulty), notes: children(child(l, 'notes'), 'note'), chords: children(child(l, 'chords'), 'chord'), shapes: children(child(l, 'handShapes'), 'handShape') }));
     if (!levels.length) return { song: null, warnings, errors: ['The arrangement has no note levels.'] };
     const phrases = children(child(root, 'phrases'), 'phrase').map((p) => ({ name: p.attrs.name ?? '', max: num(p.attrs.maxDifficulty) }));
     const iters = children(child(root, 'phraseIterations'), 'phraseIteration').map((p) => ({ time: num(p.attrs.time), phrase: num(p.attrs.phraseId) }));
     if (!iters.length || !phrases.length) {
       const top = levels.reduce((a, b) => (b.d > a.d ? b : a));
-      data = { notes: top.notes, chords: top.chords };
+      data = { notes: top.notes, chords: top.chords, shapes: top.shapes };
       warnings.push('No phrase information: using the hardest difficulty level throughout.');
     } else {
       iters.forEach((it, k) => {
         const end = k + 1 < iters.length ? iters[k + 1].time : Infinity;
         const want = phrases[it.phrase]?.max ?? 0;
         const lvl = levels.filter((l) => l.d <= want).reduce<typeof levels[number] | null>((a, b) => (!a || b.d > a.d ? b : a), null) ?? levels[0];
-        const inRange = (n: XmlNode) => { const t = num(n.attrs.time); return t >= it.time && t < end; };
+        const inRange = (n: XmlNode) => { const t = num(n.attrs.time ?? n.attrs.startTime); return t >= it.time && t < end; };
         data.notes.push(...lvl.notes.filter(inRange));
         data.chords.push(...lvl.chords.filter(inRange));
+        data.shapes.push(...lvl.shapes.filter(inRange));
       });
     }
   }
@@ -125,6 +127,14 @@ export function songFromRocksmithXml(text: string, id: string): RocksmithImport 
     if (c.attrs.fretHandMute === '1') tech.push('dead');
     events.push({ kind: 'chord', time, name: tpl?.name ?? '', notes: notes.sort((a, b) => a.string - b.string), sustain: Math.max(0, ...notes.map((n) => n.sustain)), techniques: tech });
   }
+  const shapes: SongShape[] = [];
+  for (const h of data.shapes) {
+    const tpl = templates[num(h.attrs.chordId, -1)];
+    const start = num(h.attrs.startTime), end = num(h.attrs.endTime);
+    if (!tpl || !(end > start)) continue;
+    shapes.push({ start, end, name: tpl.name, frets: tpl.frets.slice(0, strings.length), arpeggio: tpl.arpeggio });
+  }
+  shapes.sort((a, b) => a.start - b.start);
   if (missingTemplates) warnings.push(`${missingTemplates} chord(s) referenced a missing chord template.`);
   events.sort((a, b) => a.time - b.time);
   if (!events.length) return { song: null, warnings, errors: ['The arrangement contains no notes.'] };
@@ -144,7 +154,7 @@ export function songFromRocksmithXml(text: string, id: string): RocksmithImport 
       title: textOf(root, 'title') || 'Untitled', artist: textOf(root, 'artistName') || '', album: textOf(root, 'albumName') || undefined,
       year: num(textOf(root, 'albumYear')) || undefined, arrangement,
       tuning: { name: tuningName(strings, isBass), strings }, capo, duration, averageTempo: Math.round(tempo),
-      beats, sections, events, source: 'rocksmith-xml',
+      beats, sections, events, ...(shapes.length ? { shapes } : {}), source: 'rocksmith-xml',
     },
     warnings, errors: [],
   };

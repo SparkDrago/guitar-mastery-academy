@@ -22,6 +22,16 @@ export type SongEvent =
   | ({ kind: 'note' } & SongNote)
   | { kind: 'chord'; time: number; name: string; notes: SongNote[]; sustain: number; techniques: Technique[] };
 
+/** A held chord shape (Rocksmith hand shape). Arpeggios are shown as a frame while their notes play one by one. */
+export interface SongShape {
+  start: number;
+  end: number;
+  name: string;
+  /** Fret per string, null = not part of the shape. */
+  frets: (number | null)[];
+  arpeggio: boolean;
+}
+
 export interface SongSection {
   name: string;
   start: number;
@@ -45,6 +55,8 @@ export interface PlaySong {
   beats: { time: number; downbeat: boolean }[];
   sections: SongSection[];
   events: SongEvent[];
+  /** Optional chord shapes held over time (arpeggios). */
+  shapes?: SongShape[];
   source: 'exercise' | 'tab' | 'rocksmith-xml' | 'guitar-pro';
 }
 

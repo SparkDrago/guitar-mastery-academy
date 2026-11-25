@@ -43,6 +43,7 @@ export function drawHighway(g: CanvasRenderingContext2D, W: number, H: number, s
   const scale = (z: number) => 1 / (1 + PERSPECTIVE * Math.max(0, z));
   const P = (x: number, y: number, z: number) => { const s = scale(z); return [cx + (x - cx) * s, horizonY + (y - horizonY) * s] as const; };
   const zOf = (time: number) => (time - t) / lookahead;
+  const label = labelWith(g);
 
   // Background
   const bg = g.createLinearGradient(0, 0, 0, H);
@@ -108,6 +109,37 @@ export function drawHighway(g: CanvasRenderingContext2D, W: number, H: number, s
     g.globalAlpha = 1;
   }
 
+  /** Screen x range (at the strings) of a chord frame for these frets; open strings only → the whole board. */
+  function frameX(frets: (number | null)[]): [number, number] {
+    const frs = frets.filter((f): f is number => f !== null && f > 0);
+    if (!frs.length) return [m + 2, W - m - 2];
+    const a = fx0(Math.min(...frs) - 1), b = fx0(Math.max(...frs));
+    return [Math.min(a, b) - 6, Math.max(a, b) + 6];
+  }
+
+  // Arpeggio hand shapes: a dashed frame on the floor for as long as the shape is held.
+  for (const sh of song.shapes ?? []) {
+    if (!sh.arpeggio) continue;
+    const z1 = Math.max(0, zOf(sh.start)), z2 = Math.min(1, zOf(sh.end));
+    if (z2 <= 0 || z1 >= 1 || z2 <= z1) continue;
+    const [xa, xb] = frameX(sh.frets);
+    const rows = sh.frets.flatMap((f, i) => (f === null ? [] : [rowY(i)]));
+    const yb = rows.length ? Math.max(...rows) + 12 : rowBottom + 10;
+    const [a1, b1] = P(xa, yb, z1), [a2] = P(xb, yb, z1), [c1, d1] = P(xa, yb, z2), [c2] = P(xb, yb, z2);
+    g.save();
+    g.setLineDash([6, 5]);
+    g.strokeStyle = 'rgba(239,237,251,0.45)';
+    g.fillStyle = 'rgba(239,237,251,0.04)';
+    g.lineWidth = 1.5;
+    g.beginPath(); g.moveTo(a1, b1); g.lineTo(a2, b1); g.lineTo(c2, d1); g.lineTo(c1, d1); g.closePath(); g.fill(); g.stroke();
+    g.restore();
+    if (sh.name && zOf(sh.start) > -0.05) {
+      g.fillStyle = '#efedfb';
+      g.font = `600 ${Math.max(10, Math.round(H * 0.032 * scale(z1)))}px Poppins, system-ui, sans-serif`;
+      g.fillText(`${sh.name} arp.`, (a1 + a2) / 2, b1 + 16 * scale(z1));
+    }
+  }
+
   // Notes, far to near so near ones draw on top
   const visible = eventsBetween(song, t - 0.4, t + lookahead).reverse();
   for (const e of visible) {
@@ -115,26 +147,33 @@ export function drawHighway(g: CanvasRenderingContext2D, W: number, H: number, s
     const status = st.status(idx);
     const notes = e.kind === 'note' ? [e as SongNote] : e.notes;
     const z = zOf(e.time);
+    // Chords get a frame over their fret span; open strings in a chord are drawn
+    // across that frame only, so they read as part of the chord (as in Rocksmith).
+    let span: [number, number] | undefined;
     if (e.kind === 'chord' && notes.length > 1) {
-      // Chord frame across the fret span and string rows.
-      const frs = notes.map((x) => x.fret).filter((f) => f > 0);
-      const fl = frs.length ? Math.min(...frs) - 1 : cam.lo, fh = frs.length ? Math.max(...frs) : cam.lo + 1;
+      const [xa, xb] = frameX(notes.map((x) => x.fret));
+      span = [xa, xb];
       const ys = notes.map((x) => rowY(x.string));
-      const xa = Math.min(fx0(fl), fx0(fh)), xb = Math.max(fx0(fl), fx0(fh));
-      const [p1x, p1y] = P(xa - 6, Math.min(...ys) - 12, Math.max(z, 0)), [p2x, p2y] = P(xb + 6, Math.max(...ys) + 12, Math.max(z, 0));
+      const [p1x, p1y] = P(xa, Math.min(...ys) - 12, Math.max(z, 0)), [p2x, p2y] = P(xb, Math.max(...ys) + 12, Math.max(z, 0));
       g.strokeStyle = status === 'hit' ? 'rgba(41,184,120,0.9)' : status === 'miss' ? 'rgba(135,128,180,0.5)' : 'rgba(239,237,251,0.55)';
       g.lineWidth = 1.5;
       g.strokeRect(p1x, p1y, p2x - p1x, p2y - p1y);
-      if ((e as Extract<SongEvent, { kind: 'chord' }>).name && z > -0.05) {
+      if (e.name && z > -0.05) {
         g.fillStyle = '#efedfb';
         g.font = `600 ${Math.max(10, Math.round(H * 0.035 * scale(z)))}px Poppins, system-ui, sans-serif`;
-        g.fillText((e as Extract<SongEvent, { kind: 'chord' }>).name, (p1x + p2x) / 2, p1y - 6 * scale(z));
+        g.fillText(e.name, (p1x + p2x) / 2, p1y - 6 * scale(z));
       }
     }
-    for (const note of notes) drawNote(note, z, status, e.time, idx);
+    if (!span && e.kind === 'note' && e.fret === 0) {
+      // A single open string inside an arpeggio shape belongs to that shape's frame.
+      const sh = song.shapes?.find((x) => x.arpeggio && e.time >= x.start - 0.001 && e.time < x.end);
+      if (sh) span = frameX(sh.frets);
+    }
+    const placed: Label[] = [];
+    for (const note of notes) drawNote(note, z, status, e.time, idx, span, placed);
   }
 
-  function drawNote(note: SongNote, z: number, status: string, time: number, idx: number) {
+  function drawNote(note: SongNote, z: number, status: string, time: number, idx: number, span: [number, number] | undefined, placed: Label[]) {
     const color = STRING_COLORS[note.string % STRING_COLORS.length];
     const y = rowY(note.string);
     const flash = st.flashes.get(idx);
@@ -143,8 +182,8 @@ export function drawHighway(g: CanvasRenderingContext2D, W: number, H: number, s
       const z2 = Math.min(1, zOf(time + note.sustain));
       const z1 = Math.max(0, z);
       if (z2 > z1) {
-        const x = note.fret === 0 ? cx : (fx0(note.fret - 1) + fx0(note.fret)) / 2;
-        const w = note.fret === 0 ? (W - 2 * m) * 0.9 : Math.abs(fx0(note.fret) - fx0(note.fret - 1)) * 0.22;
+        const x = note.fret === 0 ? (span ? (span[0] + span[1]) / 2 : cx) : (fx0(note.fret - 1) + fx0(note.fret)) / 2;
+        const w = note.fret === 0 ? (span ? span[1] - span[0] - 8 : (W - 2 * m) * 0.9) : Math.abs(fx0(note.fret) - fx0(note.fret - 1)) * 0.22;
         const [a1, b1] = P(x - w / 2, y, z1), [a2] = P(x + w / 2, y, z1), [c1, d1] = P(x - w / 2, y, z2), [c2] = P(x + w / 2, y, z2);
         g.fillStyle = color + '66';
         g.beginPath(); g.moveTo(a1, b1); g.lineTo(a2, b1); g.lineTo(c2, d1); g.lineTo(c1, d1); g.closePath(); g.fill();
@@ -161,20 +200,20 @@ export function drawHighway(g: CanvasRenderingContext2D, W: number, H: number, s
     g.globalAlpha = alpha;
     if (note.fret === 0) {
       // Open string: a bar across the visible frets.
-      const [ax, ay] = P(m + 4, y, zz), [bx] = P(W - m - 4, y, zz);
+      const [ax, ay] = P(span ? span[0] + 4 : m + 4, y, zz), [bx] = P(span ? span[1] - 4 : W - m - 4, y, zz);
       const h = Math.max(3, H * 0.022 * s);
       g.fillStyle = fill;
       roundRect(g, ax, ay - h / 2, bx - ax, h, h / 2);
       g.fill();
       g.fillStyle = '#ffffff';
-      g.font = `700 ${Math.max(9, Math.round(H * 0.03 * s))}px Poppins, system-ui, sans-serif`;
-      g.fillText('0', (ax + bx) / 2, ay + h * 0.35);
+      label('0', (ax + bx) / 2, ay, Math.max(8, Math.round(H * 0.03 * s)), placed);
     } else {
       const x = (fx0(note.fret - 1) + fx0(note.fret)) / 2;
       const fw = Math.abs(fx0(note.fret) - fx0(note.fret - 1));
       const rowGap = (rowBottom - rowTop) / Math.max(1, n - 1);
       const w = Math.min(fw * 0.72, W * 0.09) * s;
-      const h = Math.max(7, Math.min(H * 0.05, rowGap * 0.86) * s);
+      // Never taller than the gap between string rows at this depth, so far chords do not overlap.
+      const h = Math.max(3, Math.min(H * 0.05, rowGap * 0.86) * s);
       const [px, py] = P(x, y, zz);
       g.fillStyle = fill;
       if (flash !== undefined && t - flash < 0.25) { g.shadowColor = '#29b878'; g.shadowBlur = 24; }
@@ -182,8 +221,7 @@ export function drawHighway(g: CanvasRenderingContext2D, W: number, H: number, s
       g.fill();
       g.shadowBlur = 0;
       g.fillStyle = '#ffffff';
-      g.font = `700 ${Math.max(9, Math.round(h * 0.55))}px Poppins, system-ui, sans-serif`;
-      g.fillText(String(note.fret), px, py + h * 0.2);
+      label(String(note.fret), px, py, Math.max(8, Math.round(h * 0.55)), placed);
       const tag = techniqueTag(note);
       if (tag && s > 0.35) {
         g.fillStyle = '#efedfb';
@@ -193,6 +231,24 @@ export function drawHighway(g: CanvasRenderingContext2D, W: number, H: number, s
     }
     g.globalAlpha = 1;
   }
+}
+
+interface Label { x: number; y: number; w: number; h: number }
+
+/**
+ * Fret number centred on (x, y). Far away, string rows sit closer together than
+ * a legible digit is tall; a label that would collide with one already drawn for
+ * the same chord is left out rather than drawn on top of it.
+ */
+function labelWith(g: CanvasRenderingContext2D) {
+  return (text: string, x: number, y: number, fs: number, placed: Label[]) => {
+    const box = { x: x - fs * 0.32 * text.length, y: y - fs * 0.36, w: fs * 0.64 * text.length, h: fs * 0.72 };
+    if (placed.some((p) => box.x < p.x + p.w && p.x < box.x + box.w && box.y < p.y + p.h && p.y < box.y + box.h)) return;
+    placed.push(box);
+    g.fillStyle = '#ffffff';
+    g.font = `700 ${fs}px Poppins, system-ui, sans-serif`;
+    g.fillText(text, x, y + fs * 0.36);
+  };
 }
 
 function techniqueTag(n: SongNote): string {
