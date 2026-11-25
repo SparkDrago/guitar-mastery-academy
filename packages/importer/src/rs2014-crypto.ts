@@ -48,13 +48,26 @@ const SNG_KEY_MAC = new Uint8Array([
 ]);
 
 /** Decrypt a Rocksmith 2014 .sng payload (AES-256-CTR) and return the raw zlib-prefixed buffer. */
-export async function decryptRs2014SngPayload(raw: Uint8Array, platform: 'pc' | 'mac' = 'pc'): Promise<Uint8Array> {
+export async function decryptRs2014SngPayload(
+  raw: Uint8Array,
+  platform: 'pc' | 'mac' = 'pc',
+  stripSignature = true,
+): Promise<Uint8Array> {
   if (!globalThis.crypto?.subtle) throw new Error('WebCrypto is unavailable.');
-  if (raw.byteLength < 80) throw new Error('SNG file is too small.');
+  const minSize = stripSignature ? 80 : 28;
+  if (raw.byteLength < minSize) throw new Error('SNG file is too small.');
   const dv = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
   if (dv.getUint32(0, true) !== 0x4a) throw new Error('Invalid SNG header magic.');
-  const iv = raw.subarray(8, 24);
-  const ciphertext = raw.subarray(24, raw.byteLength - 56);
+
+  const flags = dv.getUint32(4, true);
+  // Bit 1 (0x02) indicates AES-256-CTR encryption; if unset, payload starts at byte 8.
+  if ((flags & 0x02) === 0) {
+    return raw.slice(8);
+  }
+
+  const iv = raw.slice(8, 24);
+  const end = stripSignature ? raw.byteLength - 56 : raw.byteLength;
+  const ciphertext = raw.slice(24, end);
   const keyBytes = platform === 'mac' ? SNG_KEY_MAC : SNG_KEY_PC;
   const key = await crypto.subtle.importKey('raw', keyBytes, { name: 'AES-CTR' }, false, ['decrypt']);
   const plain = await crypto.subtle.decrypt(

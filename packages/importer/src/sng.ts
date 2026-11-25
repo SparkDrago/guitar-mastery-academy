@@ -81,14 +81,61 @@ export interface SngImportResult {
   errors: string[];
 }
 
+function hasValidZlibHeader(data: Uint8Array, offset = 0): boolean {
+  if (data.byteLength < offset + 2) return false;
+  const cmf = data[offset];
+  const flg = data[offset + 1];
+  return (cmf & 0x0f) === 0x08 && ((cmf << 8) | flg) % 31 === 0;
+}
+
+/**
+ * Rocksmith 2014 pads the zlib-compressed SNG payload with 0..15 trailing zero bytes
+ * to align to a 16-byte AES block boundary. Browser DecompressionStream('deflate')
+ * rejects trailing bytes after the zlib stream, so we trim trailing 0x00 padding if needed.
+ */
+async function inflateSngZlib(zlibData: Uint8Array): Promise<Uint8Array> {
+  try {
+    return await inflate(zlibData, 'deflate');
+  } catch (firstErr) {
+    let end = zlibData.byteLength;
+    const minEnd = Math.max(6, zlibData.byteLength - 64);
+    while (end > minEnd && zlibData[end - 1] === 0) {
+      end--;
+      try {
+        return await inflate(zlibData.subarray(0, end), 'deflate');
+      } catch {
+        // Keep trimming trailing zero padding bytes.
+      }
+    }
+    throw firstErr;
+  }
+}
+
 async function decryptAndInflateSng(raw: Uint8Array): Promise<Uint8Array> {
-  for (const platform of ['pc', 'mac'] as const) {
-    try {
-      const payload = await decryptRs2014SngPayload(raw, platform);
-      if (payload.byteLength < 6 || payload[4] !== 0x78) continue;
-      return await inflate(payload.subarray(4), 'deflate');
-    } catch {
-      // Try next platform key.
+  if (raw.byteLength < 12) {
+    throw new Error('Could not decrypt or decompress SNG payload (unsupported key or damaged data).');
+  }
+  const dv = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+  if (dv.getUint32(0, true) === 0x4a) {
+    const flags = dv.getUint32(4, true);
+    // Unencrypted SNG (flags bit 1 clear)
+    if ((flags & 0x02) === 0) {
+      if ((flags & 0x01) === 0) return raw.subarray(8);
+      if (hasValidZlibHeader(raw, 12)) {
+        return await inflateSngZlib(raw.subarray(12));
+      }
+    }
+  }
+
+  for (const stripSignature of [true, false]) {
+    for (const platform of ['pc', 'mac'] as const) {
+      try {
+        const payload = await decryptRs2014SngPayload(raw, platform, stripSignature);
+        if (!hasValidZlibHeader(payload, 4)) continue;
+        return await inflateSngZlib(payload.subarray(4));
+      } catch {
+        // Try next platform key / layout.
+      }
     }
   }
   throw new Error('Could not decrypt or decompress SNG payload (unsupported key or damaged data).');
