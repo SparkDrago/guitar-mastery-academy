@@ -15,14 +15,13 @@
  *   entry 0 is the manifest: the newline-separated paths of entries 1..n-1
  *
  * Flags: 1 = paths are case-insensitive, 2 = absolute paths, 4 = the table
- * of contents is encrypted. An encrypted TOC (used by Rocksmith 2014) cannot
- * be read without the game's key, and this module does not decrypt it. Every
- * part it can read is still reported, and the parts it cannot read are
- * named one by one.
+ * of contents is encrypted. Rocksmith 2014's AES-256-CFB encrypted TOC is
+ * decrypted before parsing, so its entries can be read like ordinary PSARC.
  */
 import { ascii, hex, inflate, readExact, readUintBE, throwIfAborted, type ByteSource } from './bytes';
 import { lzmaDecode } from './lzma';
 import { md5 } from './md5';
+import { decryptRs2014Toc } from './rs2014-crypto';
 import { checkArchivePath } from './paths';
 import type { ComponentReport, Fact } from './types';
 
@@ -61,7 +60,7 @@ export interface PsarcArchive {
   header: PsarcHeader;
   components: ComponentReport[];
   facts: Fact[];
-  /** True when the table of contents is encrypted and the contents cannot be listed. */
+  /** True when the archive TOC was encrypted on disk (and decrypted by this reader). */
   encrypted: boolean;
   /** Entries 1..n-1 (the manifest itself is not listed). Empty when encrypted. */
   files: PsarcFile[];
@@ -131,16 +130,7 @@ export async function openPsarc(src: ByteSource, opts: PsarcOptions = {}): Promi
   const read = async (file: PsarcTocEntry, ro: { signal?: AbortSignal } = {}) => readEntry(src, header, blocks, file, maxEntry, ro.signal ?? opts.signal);
   let blocks: number[] = [];
 
-  if (header.flags & PSARC_FLAGS.ENCRYPTED_TOC) {
-    const why = 'it is stored inside the encrypted table of contents';
-    components.push(
-      { id: 'toc', label: 'Table of contents', state: 'unsupported', detail: `Encrypted (archive flag 0x4, as used by Rocksmith 2014). File names, sizes and offsets cannot be read without the game’s key, and Guitar Mastery Academy does not decrypt game archives.` },
-      { id: 'blocks', label: 'Block-size table', state: 'unavailable', detail: `Not readable: ${why}.` },
-      { id: 'manifest', label: 'File manifest', state: 'unavailable', detail: 'Not readable: its location is listed only in the encrypted table of contents.' },
-      { id: 'data', label: 'File data', state: 'unavailable', detail: `${kib(src.size - header.tocLength)} of compressed data blocks. They are not encrypted as a whole, but cannot be located without the table of contents.` },
-    );
-    return { header, components, facts, encrypted: true, files: [], read: async () => { throw new PsarcFormatError('toc', 'The table of contents is encrypted.'); } };
-  }
+  const tocEncrypted = !!(header.flags & PSARC_FLAGS.ENCRYPTED_TOC);
 
   if (!compressionKnown) {
     components.push({ id: 'toc', label: 'Table of contents', state: 'unavailable', detail: 'Not read, because the compression method is unknown.' });
@@ -152,14 +142,32 @@ export async function openPsarc(src: ByteSource, opts: PsarcOptions = {}): Promi
   const entriesEnd = HEADER_BYTES + header.entryCount * header.tocEntrySize;
   if (entriesEnd > header.tocLength) throw new PsarcFormatError('toc', `${header.entryCount} entries of ${header.tocEntrySize} bytes do not fit in the ${header.tocLength}-byte table of contents.`);
   if (header.entryCount < 1) throw new PsarcFormatError('toc', 'The archive has no entries, not even a manifest.');
-  const toc = await readExact(src, 0, header.tocLength, 'The table of contents');
+  let toc = await readExact(src, 0, header.tocLength, 'The table of contents');
+  if (tocEncrypted) {
+    try {
+      toc = await decryptRs2014Toc(toc.subarray(HEADER_BYTES));
+      components.push({ id: 'toc', label: 'Table of contents', state: 'ok', detail: 'Rocksmith 2014 AES-256-CFB TOC decrypted and parsed.' });
+    } catch (e) {
+      components.push({ id: 'toc', label: 'Table of contents', state: 'error', detail: `Could not decrypt the TOC: ${(e as Error).message}` });
+      components.push(
+        { id: 'blocks', label: 'Block-size table', state: 'unavailable', detail: 'Not readable: TOC decryption failed.' },
+        { id: 'manifest', label: 'File manifest', state: 'unavailable', detail: 'Not readable: TOC decryption failed.' },
+        { id: 'data', label: 'File data', state: 'unavailable', detail: 'Not readable: TOC decryption failed.' },
+      );
+      return { header, components, facts, encrypted: true, files: [], read: async () => { throw new PsarcFormatError('toc', 'TOC decryption failed.'); } };
+    }
+  } else {
+    components.push({ id: 'toc', label: 'Table of contents', state: 'ok', detail: `${header.entryCount} entries read (${header.tocEntrySize} bytes each).` });
+  }
+  // Decrypted payload excludes the 32-byte archive header; normalize it back
+  // to the on-disk layout so offsets below stay identical.
+  if (tocEncrypted) toc = new Uint8Array([...new Uint8Array(HEADER_BYTES), ...toc]);
+
   const entries: PsarcTocEntry[] = [];
   for (let i = 0; i < header.entryCount; i++) {
     const o = HEADER_BYTES + i * header.tocEntrySize;
     entries.push({ index: i, nameHash: hex(toc.subarray(o, o + 16)), firstBlock: readUintBE(toc, o + 16, 4), size: readUintBE(toc, o + 20, 5), offset: readUintBE(toc, o + 25, 5) });
   }
-  components.push({ id: 'toc', label: 'Table of contents', state: 'ok', detail: `${header.entryCount} entries read (${header.tocEntrySize} bytes each).` });
-
   // Block-size table.
   const width = blockWidth(header.blockSize);
   const tableBytes = header.tocLength - entriesEnd;
@@ -234,7 +242,7 @@ export async function openPsarc(src: ByteSource, opts: PsarcOptions = {}): Promi
     detail: broken ? `${broken} entr${broken === 1 ? 'y has' : 'ies have'} layout problems and cannot be read; the rest can.` : `All ${files.length} entries are within the file.`,
   });
   if (rejected) components.push({ id: 'paths', label: 'Path safety', state: 'warning', detail: `${rejected} entr${rejected === 1 ? 'y was' : 'ies were'} rejected for unsafe names.` });
-  return { header, components, facts, encrypted: false, files, read };
+  return { header, components, facts, encrypted: tocEncrypted, files, read };
 }
 
 async function readEntry(src: ByteSource, h: PsarcHeader, blocks: number[], e: PsarcTocEntry, maxEntry: number, signal?: AbortSignal): Promise<Uint8Array> {

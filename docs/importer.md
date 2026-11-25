@@ -49,7 +49,7 @@ Archives also report their structural components (`ComponentReport`: `ok`, `warn
 - TOC entries: MD5 of the path, first block, 40-bit size and offset. The block-size table uses u16/u24/u32 entries depending on the block size, and 0 means a full stored block.
 - Entry 0 is the manifest (newline-separated paths). Each name's MD5 is checked against the TOC, and paths are validated: no `..`, no drive letters, no control characters, length limits.
 - Layout checks for every entry (block range, data within the file, truncation), plus a per-entry decompression limit (1 GiB) against decompression bombs.
-- Flag 0x4 (encrypted TOC, used by Rocksmith 2014): the header and compression are reported, the TOC is reported as unsupported, and the block table, manifest and data as unavailable. **Nothing is decrypted.**
+- Flag 0x4 (encrypted TOC, used by Rocksmith 2014): the TOC is decrypted with the Rocksmith AES-256-CFB key and then parsed normally. The importer can list and extract entries; it does not decrypt file payloads separately.
 
 ## Adding an archive format
 

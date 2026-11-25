@@ -53,14 +53,19 @@ for (const compression of ['zlib', 'lzma', 'none'] as const) {
   });
 }
 
-test('encrypted table of contents: each component gets an explicit status, nothing decrypted', async () => {
+test('Rocksmith 2014 encrypted TOC decrypts and entries are accessible', async () => {
   const b = songPackage({ encryptedToc: true });
   const a = await openPsarc(bytesSource(b));
   assert.equal(a.encrypted, true);
-  assert.deepEqual(a.files, []);
-  const state = Object.fromEntries(a.components.map((c) => [c.id, c.state]));
-  assert.deepEqual(state, { header: 'ok', compression: 'ok', toc: 'unsupported', blocks: 'unavailable', manifest: 'unavailable', data: 'unavailable' });
-  await assert.rejects(() => a.read({ index: 1, nameHash: '', firstBlock: 0, size: 1, offset: 100 }), /encrypted/);
+  assert.equal(a.files.length, 11);
+  assert.deepEqual(a.files.map((f) => f.path), [
+    'songs/arr/demoriff_lead.xml', 'songs/arr/demoriff_bass.xml', 'songs/arr/demoriff_vocals.xml',
+    'manifests/songs_dlc_demoriff/demoriff_lead.json', 'audio/windows/demoriff.ogg',
+    'audio/windows/demoriff_preview.ogg', 'audio/windows/12345.wem', 'audio/windows/song_demoriff.bnk',
+    'songs/bin/generic/demoriff_lead.sng', 'gfxassets/album_art/album_demoriff_256.dds', 'appid.appid',
+  ]);
+  assert.ok(a.components.every((c) => c.state === 'ok'), JSON.stringify(a.components));
+  assert.match(new TextDecoder().decode(await a.read(a.files[0])), /<arrangement>Lead<\/arrangement>/);
 });
 
 test('integrity: bad name hash is a warning, truncated data is reported per entry', async () => {

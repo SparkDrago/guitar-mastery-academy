@@ -193,7 +193,7 @@ export function ImportPage() {
 
   const current = drafts.find((d) => d.draft.id === active) ?? null;
   const unsaved = drafts.filter((d) => !d.saved && !d.duplicate).length;
-  const encrypted = result?.files.some((f) => f.components?.some((c) => c.id === 'toc' && c.state === 'unsupported'));
+  const encrypted = result?.files.some((f) => f.components?.some((c) => c.id === 'toc' && c.state !== 'ok'));
 
   return (
     <div>

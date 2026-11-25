@@ -1,12 +1,7 @@
-/**
- * Builds PSARC archives for tests (Node only): unencrypted, with zlib, LZMA
- * or no compression. With `encryptedToc` it writes a header flagged 0x4 and
- * random bytes in place of the table of contents, which is how an archive
- * with an encrypted TOC looks to a reader without the key.
- */
+/** Builds test PSARC archives, including Rocksmith 2014 encrypted TOCs. */
 import { deflateSync } from 'node:zlib';
 import { execFileSync } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, createCipheriv } from 'node:crypto';
 
 export interface BuildOptions {
   compression?: 'zlib' | 'lzma' | 'none';
@@ -68,7 +63,13 @@ export function buildPsarc(files: { path: string; data: Uint8Array | string }[],
     offset += e.stored;
   });
   blocks.forEach((b, i) => toc.writeUIntBE(b, all.length * 30 + i * width, width));
-  const body = o.encryptedToc ? randomBytes(toc.length) : toc;
+  let body = toc;
+  if (o.encryptedToc) {
+    const words = [0x38b23dc5, 0xf7a2a170, 0x0664ae1c, 0x110edd1f, 0xc89d3057, 0xc5d40452, 0x0925dfbf, 0x2c57f20d];
+    const key = Buffer.from(words.flatMap((w) => [w & 0xff, (w >>> 8) & 0xff, (w >>> 16) & 0xff, (w >>> 24) & 0xff]));
+    const cipher = createCipheriv('aes-256-cfb', key, Buffer.alloc(16));
+    body = Buffer.concat([cipher.update(toc), cipher.final()]);
+  }
   let out = Buffer.concat([header, body, ...chunks]);
   if (o.truncate) out = out.subarray(0, out.length - o.truncate);
   return new Uint8Array(out);
