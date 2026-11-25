@@ -1,6 +1,6 @@
 /** Metronome, Fretboard and Chord Explorer pages. */
-import { useMemo, useRef, useState } from 'react';
-import { LuPlay, LuSquare, LuHand, LuVolume2, LuStar } from 'react-icons/lu';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { LuPlay, LuSquare, LuHand, LuVolume2, LuStar, LuSearch } from 'react-icons/lu';
 import { METRONOME_PRESETS, clampBpm, defaultAccents, tapTempo, type AccentLevel } from '@gma/audio';
 import {
   CHORDS, SCALES, buildChord, buildScale, findVoicings, getChord, getScale, markTones, noteName, octavesOf, parseNote, pcOf,
@@ -10,7 +10,7 @@ import { useActiveTuning, useStudent } from '@/lib/hooks';
 import { store } from '@/lib/store';
 import { cx, nowIso, uid } from '@/lib/core';
 import { getContext, pluck } from '@/lib/audio';
-import { useDocumentTitle } from '@/lib/router';
+import { navigate, useDocumentTitle, useLocation } from '@/lib/router';
 import { Badge, Button, Card, Field, PageHeader, Segmented, Select, Stepper, Toggle } from '@/components/ui';
 import { ChordDiagram, Fretboard, type FretMark } from '@/components/music';
 import { TuningPicker, useMetronome } from '@/components/widgets';
@@ -154,8 +154,14 @@ export function ChordsPage() {
   useDocumentTitle('Chords');
   const tuning = useActiveTuning();
   const s = useStudent();
-  const [root, setRoot] = useState('C');
-  const [type, setType] = useState('maj');
+  const { query } = useLocation();
+  const [root, setRoot] = useState(query.get('root') && parseNote(query.get('root')!) ? query.get('root')! : 'C');
+  const [type, setType] = useState(query.get('type') && CHORDS.some((c) => c.id === query.get('type')) ? query.get('type')! : 'maj');
+  useEffect(() => {
+    const r = query.get('root'); const t = query.get('type');
+    if (r && parseNote(r)) setRoot(r);
+    if (t && CHORDS.some((c) => c.id === t)) setType(t);
+  }, [query.toString()]);
   const [cat, setCat] = useState<string>('all');
   const [labels, setLabels] = useState<'finger' | 'interval' | 'note'>('finger');
   const [inv, setInv] = useState<'root' | 'any'>('root');
@@ -175,7 +181,7 @@ export function ChordsPage() {
   };
   return (
     <div>
-      <PageHeader title="Chord Explorer" eyebrow="Tools" subtitle="Formulas, notes and playable voicings for every chord type, calculated for your tuning." actions={<Button onClick={save}><LuStar size={16} /> Save chord</Button>} />
+      <PageHeader title="Chord Explorer" eyebrow="Tools" subtitle="Formulas, notes and playable voicings for every chord type, calculated for your tuning." actions={<div className="flex gap-2"><Button onClick={() => navigate('/chord-finder')}><LuSearch size={16} /> Identify a chord</Button><Button onClick={save}><LuStar size={16} /> Save chord</Button></div>} />
       <div className="grid gap-5 lg:grid-cols-[300px_1fr]">
         <Card title="Chord">
           <div className="space-y-3">

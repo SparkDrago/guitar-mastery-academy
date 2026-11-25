@@ -206,7 +206,9 @@ export interface ExerciseRecord {
   /** Student judged (or analyzer measured) the take as clean. */
   clean: boolean;
   rating?: 1 | 2 | 3 | 4 | 5;
-  source: 'manual' | 'analyzer';
+  source: 'manual' | 'analyzer' | 'play';
+  /** Play-mode measurements (note highway with microphone scoring). */
+  play?: { accuracy: number; hits: number; total: number; speed: number; meanAbsErrorMs?: number };
   analyzer?: { meanAbsErrorMs: number; stdDevMs: number; driftMsPerBar: number; matched: number; expected: number; pitchAccuracy?: number; confidence: 'high' | 'medium' | 'low' };
   updatedAt: string;
 }

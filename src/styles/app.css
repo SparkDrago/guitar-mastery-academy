@@ -131,3 +131,6 @@ html.light {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
 }
+
+/* Play mode stage fills the screen in full-screen mode. */
+[data-stage]:fullscreen { height: 100vh !important; width: 100vw; }

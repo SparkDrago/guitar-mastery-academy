@@ -160,6 +160,10 @@ declare module 'react-icons/lu' {
   export const LuZap: Icon;
   export const LuFileText: Icon;
   export const LuBell: Icon;
+  export const LuMaximize: Icon;
+  export const LuGamepad2: Icon;
+  export const LuScanSearch: Icon;
+  export const LuEraser: Icon;
   export const LuTrendingUp: Icon;
   export const LuTrendingDown: Icon;
   export const LuKeyRound: Icon;

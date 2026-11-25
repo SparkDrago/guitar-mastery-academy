@@ -8,7 +8,7 @@ The app works without a backend (local-only mode). With a dedicated Supabase pro
 
 1. Create a new Supabase project (any region close to your students).
 2. **Apply the schema.** Either:
-   - SQL editor: paste and run `supabase/migrations/20261124000001_initial_schema.sql`, then `supabase/seed.sql`; or
+   - SQL editor: run every file in `supabase/migrations/` in name order (`20261124000001_initial_schema.sql`, then `20261125000001_play_mode.sql`), then `supabase/seed.sql`; or
    - CLI: `supabase link --project-ref <ref>` then `supabase db push`, then run `supabase/seed.sql` (e.g. `psql "$DATABASE_URL" -f supabase/seed.sql`).
 3. The seed loads the course structure (1 course, 13 levels, 27 modules, 80 lessons with their content, 238 quiz questions, 37 exercises, 17 backing-track presets, 17 achievements). It is regenerated from `content/` with `npx tsx scripts/gen-seed.ts`, so the database and the app always agree. The app itself reads content from the bundle; the seeded tables are the server-side copy for reporting, future CMS work and referential integrity of progress rows.
 
@@ -55,7 +55,7 @@ User-owned (all with `user_id → auth.users(id) on delete cascade`, RLS on, own
 | `quiz_attempts` | quiz, mastery and review scores, missed question ids | id |
 | `srs_cards` | SM-2 state per lesson | `(user_id, lesson_id)` |
 | `practice_sessions` | routines run, blocks, minutes | id |
-| `exercise_records` | logged takes (manual or analyzer, with measurements and confidence) | id |
+| `exercise_records` | logged takes (manual, analyzer or play mode, with measurements and confidence) | id |
 | `trainer_attempts`, `ear_attempts` | drill answers | id |
 | `jam_sessions` | jams, challenges, reflections | id |
 | `custom_tunings`, `saved_exercises`, `saved_items`, `practice_plans` | user-created content (soft delete via `deleted_at`) | id |

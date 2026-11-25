@@ -7,3 +7,4 @@ export * from './fretboard';
 export * from './patterns';
 export * from './harmony';
 export * from './voicings';
+export * from './lookup';

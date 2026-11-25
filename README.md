@@ -7,7 +7,9 @@ A structured, interactive electric-guitar academy that runs in the browser: a 13
 | A. Fretboard Intelligence Trainer | `/fretboard-trainer` | Nine drill modes (note naming, find a note, all occurrences, octaves, intervals, degrees, chord tones, string navigation), adaptive stages, weak-spot weighting, per-string/fret/note analytics |
 | B. Playing Analyzer | `/analyzer` | Records you over a click, detects note attacks and pitches on the device, reports measured timing and pitch with a confidence level; latency calibration; manual self-assessment fallback |
 | C. Tab & Exercise Editor | `/tab-editor` | Structured tab editing (durations, techniques, repeats, 4–9 strings, any tuning), playback, library with save/duplicate/categorise, ASCII and JSON import/export |
-| D. Jam Laboratory | `/jam`, `/improvisation` | Procedurally generated backing tracks (13 styles, 17 progressions plus custom numerals), live chord-scale analysis of the sounding chord, guided challenges |
+| D. Jam Laboratory | `/jam`, `/improvisation` | Procedurally generated backing tracks (13 styles, 17 progressions plus custom numerals), live chord-scale analysis of the sounding chord, guided challenges, and **Session mode**: the band follows your playing through the microphone (builds up when you play busier, thins out when you play sparsely, waits when you stop) while your notes are shown as chord tones, scale tones or outside notes |
+| Play Mode | `/play` | Note highway in the style of rhythm-game guitar trainers: colour-coded strings, perspective fret lanes, chords, sustains and techniques; live microphone scoring (streak, multiplier, accuracy, per-section results); riff repeater (section loop) and 50–100% speed; imports Rocksmith arrangement XML, Guitar Pro 7/8 (.gp) and its own JSON, with your own recording attached for play-along |
+| Chord Finder | `/chord-finder` | Reverse chord lookup from a fretboard shape (any tuning), typed note names, or by listening to a strummed chord; names, inversions, note functions and alternative names |
 | E. Practice Scheduler | `/practice` | 15/30/60/90/custom routines built from level, goals, measured weak spots and neglected skills; session runner with break reminders; analytics |
 
 The interface has a dark (default) and a light theme, switchable from the sidebar, and a site search over pages, lessons and glossary terms.
@@ -35,8 +37,8 @@ The app runs fully in **local-only mode** with no configuration: progress is sav
 | `npm run build` | Production build into `dist/` (esbuild + Tailwind) |
 | `npm run preview` | Serve `dist/` on port 4173 |
 | `npm run typecheck` | TypeScript strict check of all packages and the app |
-| `npm test` | Unit tests (64): theory, audio DSP, notation, data/sync, learning engine, content integrity |
-| `npm run test:e2e` | Browser tests (21) in Chrome against `dist/`, including the tuner and analyzer on synthesised microphone audio |
+| `npm test` | Unit tests (76): theory, audio DSP, notation, data/sync, learning engine, content integrity |
+| `npm run test:e2e` | Browser tests (26) in Chrome against `dist/`, including the tuner and analyzer on synthesised microphone audio |
 | `scripts/test-db.sh` | Applies the migration + seed to a local PostgreSQL with a Supabase shim and runs RLS/constraint tests |
 | `npm run check` | typecheck + unit + build + e2e |
 | `npx tsx scripts/gen-seed.ts` / `gen-curriculum-doc.ts` | Regenerate the Supabase seed / curriculum overview from `content/` |

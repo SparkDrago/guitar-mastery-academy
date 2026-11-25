@@ -7,3 +7,5 @@ export * from './scheduler';
 export * from './recommend';
 export * from './jam';
 export * from './assessment';
+export * from './play';
+export * from './session';

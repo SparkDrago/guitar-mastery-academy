@@ -53,7 +53,13 @@ function guitarTone(freq, seconds = 6, every = 1.5, sr = 48000) {
   }
   return out;
 }
+function chordTone(freqs, seconds = 6, sr = 48000) {
+  const parts = freqs.map((f) => guitarTone(f, seconds, 2, sr));
+  return parts[0].map((_, i) => parts.reduce((a, p) => a + p[i], 0) / freqs.length * 1.6);
+}
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gma-e2e-'));
+const C_CHORD = path.join(tmp, 'c-major.wav');
+fs.writeFileSync(C_CHORD, wav(chordTone([130.81, 164.81, 196.0, 261.63, 329.63])));
 const A2 = path.join(tmp, 'a2-110hz.wav');
 const SHARP_E4 = path.join(tmp, 'e4-sharp.wav');
 fs.writeFileSync(A2, wav(guitarTone(110)));
@@ -94,7 +100,7 @@ const stored = (page, collection) => page.evaluate((c) => {
 
 test('every route renders without errors', async (b) => {
   const page = await newPage(b);
-  const routes = ['/', '/path', '/lessons', '/lessons/l0-tuning', '/theory', '/tuner', '/metronome', '/fretboard', '/scales', '/chords', '/practice', '/technique-lab', '/fretboard-trainer', '/ear-training', '/analyzer', '/tab-editor', '/improvisation', '/jam', '/progress', '/settings', '/account'];
+  const routes = ['/', '/path', '/lessons', '/lessons/l0-tuning', '/theory', '/tuner', '/metronome', '/fretboard', '/scales', '/chords', '/chord-finder', '/play', '/practice', '/technique-lab', '/fretboard-trainer', '/ear-training', '/analyzer', '/tab-editor', '/improvisation', '/jam', '/progress', '/settings', '/account'];
   for (const r of routes) {
     await go(page, r);
     await page.waitForTimeout(150);
@@ -459,7 +465,7 @@ test('settings: backup export/import round trip', async (b) => {
 
 test('mobile layout: navigation, tuner access, no horizontal overflow', async (b) => {
   const page = await newPage(b, { mobile: true });
-  for (const r of ['/', '/tuner', '/fretboard', '/scales', '/tab-editor', '/jam', '/fretboard-trainer', '/practice', '/progress', '/lessons/l3-major-scale']) {
+  for (const r of ['/', '/tuner', '/fretboard', '/scales', '/tab-editor', '/jam', '/fretboard-trainer', '/practice', '/progress', '/lessons/l3-major-scale', '/play', '/chord-finder']) {
     await go(page, r);
     await page.waitForTimeout(200);
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
@@ -474,6 +480,119 @@ test('mobile layout: navigation, tuner access, no horizontal overflow', async (b
   await page.screenshot({ path: path.join(shots, 'mobile-tuner.png') });
   expect(page.errors.length === 0, page.errors.join('\n'));
 });
+
+
+test('chord finder: fretboard shape, typed notes and listening', async () => {
+  const b = await launch(C_CHORD);
+  try {
+    const page = await newPage(b);
+    await go(page, '/chord-finder');
+    for (const pos of ['1-3', '2-2', '3-0', '4-1', '5-0']) await page.locator(`[data-testid=finder-fretboard] [data-pos="${pos}"]`).click();
+    expect((await page.getByTestId('finder-best').textContent()) === 'C', `x32010 should be C, got ${await page.getByTestId('finder-best').textContent()}`);
+    await page.locator('[data-testid=finder-fretboard] [data-pos="0-0"]').click();
+    expect((await page.getByTestId('finder-best').textContent()) === 'C/E', 'adding low E gives C/E');
+    await page.getByRole('radio', { name: 'Type notes' }).click();
+    await page.getByTestId('finder-notes').fill('C E G A');
+    expect((await page.getByTestId('finder-best').textContent()) === 'C6', 'C E G A → C6');
+    expect((await page.getByTestId('finder-result').textContent())?.includes('Am7/C'), 'alternative Am7/C listed');
+    await page.getByRole('radio', { name: 'Listen' }).click();
+    await page.getByTestId('finder-listen').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=finder-best]')?.textContent === 'C', null, { timeout: 8000 });
+    expect(page.errors.length === 0, page.errors.join('\n'));
+  } finally { await b.close(); }
+}, { ownBrowser: true });
+
+const DEMO_XML = path.join(root, 'tests/fixtures/demo-arrangement.xml');
+
+test('play mode: import, practice run, pause/resume, unsupported files', async (b) => {
+  const page = await newPage(b);
+  await go(page, '/play');
+  await page.getByTestId('play-import').click();
+  await page.getByTestId('play-import-file').setInputFiles({ name: 'song.psarc', mimeType: 'application/octet-stream', buffer: Buffer.from('PSAR') });
+  expect((await page.locator('[role=dialog]').textContent())?.includes('encrypted'), 'PSARC explained');
+  await page.getByTestId('play-import-file').setInputFiles(DEMO_XML);
+  await page.getByTestId('play-imported').waitFor();
+  expect((await page.getByTestId('play-setup').textContent())?.includes('Demo Riff in A Minor'), 'imported song selected');
+  const sw = page.getByRole('switch', { name: 'Score with the microphone' });
+  if ((await sw.getAttribute('aria-checked')) === 'true') await sw.click();
+  await page.getByTestId('play-start').click();
+  await page.getByTestId('play-canvas').waitFor();
+  await page.waitForTimeout(3500);
+  const ink = await page.evaluate(() => { const c = document.querySelector('[data-testid=play-canvas]'); const g = c.getContext('2d'); const d = g.getImageData(0, 0, c.width, c.height).data; let colored = 0; for (let i = 0; i < d.length; i += 400) if (d[i] + d[i + 1] + d[i + 2] > 300) colored++; return colored; });
+  expect(ink > 20, `highway is drawn (${ink} bright samples)`);
+  await page.getByTestId('play-pause').click();
+  expect((await page.getByTestId('play-stage').textContent())?.includes('Paused'), 'paused');
+  await page.getByTestId('play-pause').click();
+  await page.getByTestId('play-exit').click();
+  await page.reload();
+  await page.getByTestId('play-imported').waitFor();
+  expect((await page.getByTestId('play-imported').textContent())?.includes('Demo Riff'), 'imported song persists in IndexedDB');
+  expect(page.errors.length === 0, page.errors.join('\n'));
+});
+
+test('play mode: live microphone scoring and best score', async () => {
+  const b = await launch(A2);
+  try {
+    const page = await newPage(b);
+    await go(page, '/play');
+    await page.getByTestId('play-import').click();
+    await page.getByTestId('play-import-file').setInputFiles(DEMO_XML);
+    await page.getByTestId('play-imported').waitFor();
+    const sw = page.getByRole('switch', { name: 'Score with the microphone' });
+    if ((await sw.getAttribute('aria-checked')) !== 'true') await sw.click();
+    await page.getByTestId('play-start').click();
+    await page.getByTestId('play-summary').waitFor({ timeout: 40000 });
+    const txt = await page.getByTestId('play-summary').textContent();
+    const acc = Number(/Accuracy(\d+)%/.exec(txt ?? '')?.[1]);
+    console.log(`      (accuracy from a steady A2 on the demo riff: ${acc}%)`);
+    // The fake microphone plays a steady A2, which matches only the riff's open-A notes.
+    expect(acc > 0 && acc < 60, `partial accuracy expected from a constant A2, got ${acc}% (${txt})`);
+    await page.getByRole('button', { name: 'Back to songs' }).click();
+    const recs = await page.evaluate(async () => { const r = await new Promise((res) => { const q = indexedDB.open('gma-local'); q.onsuccess = () => { const t = q.result.transaction('songs').objectStore('songs').getAll(); t.onsuccess = () => res(t.result); }; }); return r; });
+    expect(recs.length === 1 && recs[0].best && recs[0].best.accuracy > 0, 'best score stored for the song');
+    // Exercise run records a Technique Lab entry.
+    await go(page, '/play?exercise=ex-chromatic-1234');
+    await page.waitForTimeout(300);
+    expect((await page.getByTestId('play-setup').textContent())?.length > 0, 'exercise setup shown');
+    expect(page.errors.length === 0, page.errors.join('\n'));
+  } finally { await b.close(); }
+}, { ownBrowser: true, slow: true });
+
+test('play mode: Guitar Pro import', async (b) => {
+  const { deflateRawSync } = await import('node:zlib');
+  const gpif = `<GPIF><Score><Title><![CDATA[GP Import Test]]></Title><Artist><![CDATA[Fixture]]></Artist></Score><MasterTrack><Automations><Automation><Type>Tempo</Type><Bar>0</Bar><Position>0</Position><Value>100 2</Value></Automation></Automations></MasterTrack><Tracks><Track id="0"><Name>Lead</Name><Staves><Staff><Properties><Property name="Tuning"><Pitches>40 45 50 55 59 64</Pitches></Property></Properties></Staff></Staves></Track><Track id="1"><Name>Bass</Name><Staves><Staff><Properties><Property name="Tuning"><Pitches>28 33 38 43</Pitches></Property></Properties></Staff></Staves></Track></Tracks><MasterBars><MasterBar><Time>4/4</Time><Bars>0 1</Bars></MasterBar></MasterBars><Bars><Bar id="0"><Voices>0 -1 -1 -1</Voices></Bar><Bar id="1"><Voices>1 -1 -1 -1</Voices></Bar></Bars><Voices><Voice id="0"><Beats>0 0 0 0</Beats></Voice><Voice id="1"><Beats>1</Beats></Voice></Voices><Beats><Beat id="0"><Rhythm ref="0"/><Notes>0</Notes></Beat><Beat id="1"><Rhythm ref="1"/><Notes>1</Notes></Beat></Beats><Notes><Note id="0"><Properties><Property name="String"><String>1</String></Property><Property name="Fret"><Fret>2</Fret></Property></Properties></Note><Note id="1"><Properties><Property name="String"><String>0</String></Property><Property name="Fret"><Fret>5</Fret></Property></Properties></Note></Notes><Rhythms><Rhythm id="0"><NoteValue>Quarter</NoteValue></Rhythm><Rhythm id="1"><NoteValue>Whole</NoteValue></Rhythm></Rhythms></GPIF>`;
+  const name = Buffer.from('Content/score.gpif');
+  const data = deflateRawSync(Buffer.from(gpif));
+  const lh = Buffer.alloc(30); lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(8, 8); lh.writeUInt32LE(data.length, 18); lh.writeUInt32LE(gpif.length, 22); lh.writeUInt16LE(name.length, 26);
+  const ch = Buffer.alloc(46); ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(8, 10); ch.writeUInt32LE(data.length, 20); ch.writeUInt32LE(gpif.length, 24); ch.writeUInt16LE(name.length, 28); ch.writeUInt32LE(0, 42);
+  const localLen = 30 + name.length + data.length;
+  const end = Buffer.alloc(22); end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(1, 8); end.writeUInt16LE(1, 10); end.writeUInt32LE(46 + name.length, 12); end.writeUInt32LE(localLen, 16);
+  const zip = Buffer.concat([lh, name, data, ch, name, end]);
+  const page = await newPage(b);
+  await go(page, '/play');
+  await page.getByTestId('play-import').click();
+  await page.getByTestId('play-import-file').setInputFiles({ name: 'fixture.gp', mimeType: 'application/octet-stream', buffer: zip });
+  await page.getByRole('button', { name: /^Bass/ }).click();
+  await page.getByTestId('play-imported').waitFor();
+  const setup = await page.getByTestId('play-setup').textContent();
+  expect(setup?.includes('GP Import Test') && setup.includes('Bass'), `GP track imported (${setup?.slice(0, 120)})`);
+  expect(page.errors.length === 0, page.errors.join('\n'));
+});
+
+test('jam session mode follows the microphone', async () => {
+  const b = await launch(A2);
+  try {
+    const page = await newPage(b);
+    await go(page, '/jam');
+    await page.getByTestId('jam-session').getByRole('switch').click();
+    await page.getByTestId('jam-play').click();
+    await page.waitForFunction(() => /A/.test(document.querySelector('[data-testid=jam-trail]')?.textContent ?? ''), null, { timeout: 10000 });
+    const card = await page.getByTestId('jam-session').textContent();
+    expect(/Listening|waiting/.test(card ?? '') && /notes\/s/.test(card ?? ''), 'session status shown');
+    await page.getByTestId('jam-stop').click();
+    expect(page.errors.length === 0, page.errors.join('\n'));
+  } finally { await b.close(); }
+}, { ownBrowser: true });
 
 // ── run ──────────────────────────────────────────────────────────────────
 const selected = tests.filter((t) => !filters.length || filters.some((f) => t.name.includes(f)));

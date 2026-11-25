@@ -414,6 +414,7 @@ export function TabEditorPage() {
                 <div className="flex flex-wrap gap-2 pt-1">
                   <Button size="sm" onClick={() => navigate(`/technique-lab?exercise=${meta.id}`)}><LuZap size={14} /> Technique Lab</Button>
                   <Button size="sm" onClick={() => navigate(`/analyzer?exercise=${meta.id}`)}><LuMic size={14} /> Analyze</Button>
+                  <Button size="sm" onClick={() => navigate(`/play?exercise=${meta.id}`)}><LuPlay size={14} /> Play mode</Button>
                 </div>
               )}
               {dirty && <p className="text-xs text-warn-400">Unsaved changes</p>}

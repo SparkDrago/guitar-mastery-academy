@@ -33,10 +33,10 @@ Path aliases (`tsconfig.json`): `@gma/*` → `packages/*/src`, `@content/*` → 
 
 | Package | Key exports | Notes |
 |---|---|---|
-| `@gma/theory` | `parseNote`, `buildScale`, `buildChord`, `TUNINGS` (39 presets), `midiAt`, `markTones`, `threeNpsPatterns`, `fivePositionPatterns`, `cagedPositions`, `buildPillitierePattern`, `diatonicChords`, `numeralToChord`, `chordScales`, `findVoicings` | Notes are spelled (letter + accidental), so key signatures and modes spell correctly. Tunings are per-string MIDI numbers, 4–9 strings. |
-| `@gma/audio` | `yin`, `TunerEngine`, `detectOnsets`, `analyseTimingGrid`, `checkPitches`, `timingFeedback`, `scheduleUntil`, `arrange`, `JAM_STYLES` | Operates on `Float32Array`s; no Web Audio. Unit-tested on synthesised signals. |
-| `@gma/notation` | `TabScore`, `validateScore`, `toPlayback`, `toAscii`, `parseAscii` | Native JSON model; see [tab-format.md](tab-format.md). |
-| `@gma/learning` | `StudentState`, `checkMastery`, `reviewCard`, `generateQuestion`, `generateEarQuestion`, `buildRoutine`, `dailyRecommendations`, `buildChallenge`, `buildAssessment` | Pure functions of state + content + `now`. |
+| `@gma/theory` | `parseNote`, `buildScale`, `buildChord`, `TUNINGS` (39 presets), `midiAt`, `markTones`, `threeNpsPatterns`, `fivePositionPatterns`, `cagedPositions`, `buildPillitierePattern`, `diatonicChords`, `numeralToChord`, `chordScales`, `findVoicings`, `reverseChordLookup` | Notes are spelled (letter + accidental), so key signatures and modes spell correctly. Tunings are per-string MIDI numbers, 4–9 strings. |
+| `@gma/audio` | `yin`, `TunerEngine`, `detectOnsets`, `analyseTimingGrid`, `checkPitches`, `timingFeedback`, `scheduleUntil`, `arrange`, `JAM_STYLES`, `chroma`, `matchChroma` | Operates on `Float32Array`s; no Web Audio. Unit-tested on synthesised signals. |
+| `@gma/notation` | `TabScore`, `validateScore`, `toPlayback`, `toAscii`, `parseAscii`, `PlaySong`, `songFromTabScore`, `songFromRocksmithXml`, `songFromGpif`, `parseXml`, ZIP reader | Native JSON model; see [tab-format.md](tab-format.md). |
+| `@gma/learning` | `StudentState`, `checkMastery`, `reviewCard`, `generateQuestion`, `generateEarQuestion`, `buildRoutine`, `dailyRecommendations`, `buildChallenge`, `buildAssessment`, `PlayScorer`, `SessionFollower` | Pure functions of state + content + `now`. |
 | `@gma/data` | `LocalRepository`, `SupabaseClient`, `SyncEngine`, `COLLECTIONS` | Storage via a `KeyValueStorage` interface (localStorage in the browser, memory in tests, anything else later). |
 
 ## State and persistence
@@ -72,6 +72,9 @@ mutation ──► local save ──► outbox (collection, id)
 |---|---|---|---|
 | Tuner | `getUserMedia` (echo cancellation, noise suppression and AGC disabled) → `AnalyserNode` | Decimation for low strings, YIN with parabolic interpolation, median smoothing and hysteresis in `TunerEngine`, string matching against the active tuning | Note, Hz, cents, closest string, in-tune status |
 | Analyzer | `AudioWorklet` recorder (ScriptProcessor fallback), scheduled click track | Spectral-flux onsets → matched to the expected grid from the score (`analyseTimingGrid`), latency compensation, YIN per matched note for single-note lines | Timing metrics, drift, consistency, pitch accuracy, confidence, evidence-backed feedback |
+| Play mode | `AnalyserNode` (8192), HTMLAudio for the player's recording or synthesised guide tones | YIN on the newest 2048 samples (single notes), chroma on 8192 (chords), latency compensation, `PlayScorer` timing windows | Hit/miss per note and chord, streak, multiplier, per-section accuracy |
+| Chord Finder (listen) | `AnalyserNode` (8192) | Peak-picked chroma, smoothed | Active pitch classes → `reverseChordLookup` |
+| Session mode | `AnalyserNode` | Level envelope → attack detection → `SessionFollower` intensity; YIN for note feedback | Arranger density 1–3, "band waits" when silent |
 | Metronome / backing | `AudioContext` clock | Look-ahead scheduler (25–40 ms timer, ~100–200 ms horizon) | Sample-accurate clicks and synthesised drums, bass and chords |
 
 All instruments are synthesised (no samples to license or download).

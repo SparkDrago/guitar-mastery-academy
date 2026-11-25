@@ -69,3 +69,16 @@ Import (`parseAscii`) accepts tab pasted from most sources:
 - Rhythm is inferred from horizontal spacing, so imported tab plays with approximate durations; check durations in the editor.
 - The editor's current tuning is used when its string count matches the tab; otherwise the standard tuning for that string count (4, 6, 7 or 8) is assumed and a warning is shown.
 - Anything unparseable is reported as a warning rather than silently dropped.
+
+## Song files for Play mode
+
+Play mode uses a timed model (`PlaySong`, seconds rather than beats; see `packages/notation/src/song.ts`). It can be created from:
+
+| Source | Notes |
+|---|---|
+| Exercises and Tab Editor scores | converted at the chosen tempo, played twice after a two-bar count-in |
+| Rocksmith 2014 arrangement XML (`<song>` root) | open format written by custom-song tools. String 0 is the lowest string; `<tuning stringN>` are semitone offsets from E standard (bass E1 A1 D2 G2); times are seconds in the song audio; bends are in half steps. Each `<phraseIteration>` takes its phrase's `maxDifficulty` level (or the `<transcriptionTrack>` if present). Sections, beats, chord templates, sustains and common techniques are imported. Vocals/showlights XML is rejected. |
+| Guitar Pro 7/8 `.gp` | ZIP containing `Content/score.gpif`; tempo automations, time signatures, sections, ties, rhythm values (dots, tuplets), hammer-ons/pull-offs, slides, bends, palm mutes, dead notes, harmonics, vibrato and taps. The player picks a track when there are several. |
+| Guitar Mastery `.json` | a serialized `PlaySong` (`"format": "gma-song"`). |
+
+A recording can be attached to any imported song; the sync offset (−3…+3 s) aligns it with the notes.

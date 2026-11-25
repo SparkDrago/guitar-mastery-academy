@@ -12,6 +12,15 @@ An honest list of what the current build does not do, or does only partly. Nothi
 - **Synthesised sound.** All instruments (guitar, bass, drums, clicks) are synthesised in the browser. They are clear enough for practice but are not realistic recordings.
 - The analyzer was tested end to end with synthesised microphone input in Chrome; the timing/pitch algorithms are unit-tested on synthetic signals with known errors. They have not been validated against a corpus of real recordings by human-rated players.
 
+## Play mode and imports
+
+- **Rocksmith .psarc/.sng files are not supported.** They are encrypted for the game and the app does not circumvent that encryption. Custom-song authors can export the open arrangement XML (Rocksmith Custom Song Toolkit, EOF) and the audio (OGG/WAV), which the app imports.
+- Guitar Pro 3–6 (.gp3/.gp4/.gp5/.gpx) are not imported; save as Guitar Pro 7/8 (.gp). Only the first voice of one track is used; tuplets beyond simple ratios, grace notes, and some techniques (whammy, rasgueado) are ignored.
+- Play-mode scoring is single-microphone pitch analysis: single notes use YIN pitch detection, chords use a 12-bin pitch-class profile and count when all but one chord tone sound. It cannot verify string choice, fingering or muting, and loud backing audio through speakers can confuse it (use headphones).
+- Imported songs and recordings are stored only in this browser (IndexedDB), are not synced and are lost if site data is cleared. Only import material you have the right to use.
+- The highway is drawn with Canvas 2D (not 3D); camera movement follows the upcoming notes automatically.
+- Session mode follows intensity (attack rate and loudness), not tempo: the band keeps the tempo you set.
+
 ## Content
 
 - The curriculum is original teaching material organised around the supplied books; it does not reproduce their text, songs or tab. Song-based practice therefore uses original exercises rather than the books' songs.
