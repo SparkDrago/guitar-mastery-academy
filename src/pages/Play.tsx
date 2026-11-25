@@ -6,10 +6,10 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  LuMaximize, LuPlay, LuPause, LuX, LuUpload, LuMusic, LuTrash2, LuRepeat, LuMic, LuMicOff, LuFileMusic, LuRotateCcw, LuTrophy, LuInfo, LuVolume2,
+  LuMaximize, LuPlay, LuPause, LuX, LuUpload, LuMusic, LuTrash2, LuRepeat, LuMic, LuMicOff, LuFileMusic, LuRotateCcw, LuTrophy, LuInfo, LuVolume2, LuLayers2,
 } from 'react-icons/lu';
 import {
-  allNotes, fretWindow, gpTracks, gpifFromGpFile, midiOfNote, songFromGpif, songFromRocksmithXml, songFromTabScore, validateSong,
+  allNotes, fretWindow, midiOfNote, songFromTabScore,
   type PlaySong, type SongEvent,
 } from '@gma/notation';
 import { PlayScorer, type Exercise, type PlayStats } from '@gma/learning';
@@ -17,15 +17,15 @@ import { chroma as chromaOf, yin } from '@gma/audio';
 import { reverseChordLookup, pcName } from '@gma/theory';
 import { useAllExercises, useStudent } from '@/lib/hooks';
 import { store } from '@/lib/store';
-import { cx, nowIso, readFile, uid } from '@/lib/core';
+import { cx, nowIso, uid } from '@/lib/core';
 import { MicInput, click, getContext, micErrorMessage, pluck, type MicError } from '@/lib/audio';
-import { songStore, type StoredSong } from '@/lib/idb';
-import { useDocumentTitle, useLocation } from '@/lib/router';
+import { library, type LibraryArrangement, type LibrarySong } from '@/lib/idb';
+import { navigate, useDocumentTitle, useLocation } from '@/lib/router';
 import { Badge, Button, Callout, Card, Empty, Field, Modal, PageHeader, Segmented, Select, Stepper, Toggle } from '@/components/ui';
 import { HBars } from '@/components/charts';
 import { drawHighway, STRING_COLORS } from '@/components/highway';
 
-type Source = { kind: 'imported'; rec: StoredSong } | { kind: 'exercise'; ex: Exercise };
+type Source = { kind: 'imported'; lib: LibrarySong; arr: LibraryArrangement } | { kind: 'exercise'; ex: Exercise };
 
 interface PlayOptions {
   speed: number;
@@ -50,14 +50,31 @@ export function PlayPage() {
   useDocumentTitle('Play');
   const exercises = useAllExercises();
   const { query } = useLocation();
-  const [imported, setImported] = useState<StoredSong[]>([]);
+  const [imported, setImported] = useState<LibrarySong[]>([]);
   const [persistent, setPersistent] = useState(true);
   const [selected, setSelected] = useState<Source | null>(null);
   const [playing, setPlaying] = useState<{ song: PlaySong; audio: Blob | null; offset: number; opts: PlayOptions; source: Source; bpm: number } | null>(null);
-  const [importOpen, setImportOpen] = useState(false);
 
-  const refresh = async () => { setImported(await songStore.list()); setPersistent(await songStore.persistent()); };
-  useEffect(() => { void refresh(); }, []);
+  const refresh = async () => {
+    const list = await library.list();
+    setImported(list);
+    setPersistent(await library.persistent());
+    // Keep the selection pointing at fresh records (offset, audio, best score).
+    setSelected((cur) => {
+      if (cur?.kind !== 'imported') return cur;
+      const lib = list.find((x) => x.id === cur.lib.id);
+      const arr = lib?.arrangements.find((a) => a.id === cur.arr.id) ?? lib?.arrangements[0];
+      return lib && arr ? { kind: 'imported', lib, arr } : null;
+    });
+    return list;
+  };
+  useEffect(() => {
+    void refresh().then((list) => {
+      const id = query.get('song');
+      const lib = id ? list.find((x) => x.id === id) : undefined;
+      if (lib) setSelected({ kind: 'imported', lib, arr: lib.arrangements.find((a) => a.id === query.get('arrangement')) ?? lib.arrangements[0] });
+    });
+  }, [query.get('song')]);
   useEffect(() => {
     const id = query.get('exercise');
     if (id) { const ex = exercises.find((e) => e.id === id); if (ex) setSelected({ kind: 'exercise', ex }); }
@@ -65,26 +82,27 @@ export function PlayPage() {
 
   if (playing) return <Stage {...playing} onExit={() => { setPlaying(null); void refresh(); }} />;
 
+  const goImport = () => navigate('/import');
   return (
     <div>
       <PageHeader eyebrow="Play" title="Play mode" subtitle="Play along with a scrolling note highway. The microphone listens and scores every note and chord. Import your own arrangements and recordings, or play any exercise."
-        actions={<Button variant="primary" onClick={() => setImportOpen(true)} data-testid="play-import"><LuUpload size={16} /> Import song</Button>} />
+        actions={<Button variant="primary" onClick={goImport} data-testid="play-import"><LuUpload size={16} /> Import songs</Button>} />
       <div className="grid gap-5 xl:grid-cols-[1fr_400px]">
         <div className="min-w-0 space-y-5">
           <Card title="My songs" subtitle={persistent ? 'Stored on this device only (not synced to your account).' : 'This browser blocks local storage: imported songs last only for this visit.'}>
             {imported.length === 0 ? (
-              <Empty title="No imported songs yet" body="Import a Rocksmith arrangement XML, a Guitar Pro 7/8 file or a Guitar Mastery song file, then add your own recording of the song." icon={<LuFileMusic size={22} />} action={<Button onClick={() => setImportOpen(true)}><LuUpload size={14} /> Import song</Button>} />
+              <Empty title="No imported songs yet" body="Import PSARC archives, Rocksmith arrangement XMLs with their OGG/WAV audio, Guitar Pro 7/8 files or Guitar Mastery song files." icon={<LuFileMusic size={22} />} action={<Button onClick={goImport}><LuUpload size={14} /> Import songs</Button>} />
             ) : (
               <ul className="grid gap-2 sm:grid-cols-2" data-testid="play-imported">
-                {imported.map((r) => (
-                  <li key={r.id}>
-                    <button type="button" onClick={() => setSelected({ kind: 'imported', rec: r })} className={cx('w-full rounded-xl px-4 py-3 text-left transition-colors', selected?.kind === 'imported' && selected.rec.id === r.id ? 'bg-accent-500/15 ring-1 ring-accent-500/50' : 'bg-ink-800 hover:bg-ink-700')}>
-                      <div className="truncate font-medium text-ink-50">{r.song.title}</div>
-                      <div className="truncate text-xs text-ink-400">{r.song.artist || 'Unknown artist'} · {r.song.arrangement} · {r.song.tuning.name}</div>
+                {imported.map((lib) => (
+                  <li key={lib.id}>
+                    <button type="button" onClick={() => setSelected({ kind: 'imported', lib, arr: lib.arrangements[0] })} className={cx('w-full rounded-xl px-4 py-3 text-left transition-colors', selected?.kind === 'imported' && selected.lib.id === lib.id ? 'bg-accent-500/15 ring-1 ring-accent-500/50' : 'bg-ink-800 hover:bg-ink-700')}>
+                      <div className="truncate font-medium text-ink-50">{lib.title}</div>
+                      <div className="truncate text-xs text-ink-400">{lib.artist || 'Unknown artist'} · {lib.arrangements.map((a) => a.label).join(' / ')} · {lib.arrangements[0].song.tuning.name}</div>
                       <div className="mt-1.5 flex flex-wrap gap-1.5">
-                        <Badge>{allNotes(r.song).length} notes</Badge>
-                        {r.audioName ? <Badge tone="ok"><LuVolume2 size={10} /> audio</Badge> : <Badge>no audio</Badge>}
-                        {r.best && <Badge tone="warn"><LuTrophy size={10} /> {Math.round(r.best.accuracy * 100)}%</Badge>}
+                        {lib.arrangements.length > 1 ? <Badge><LuLayers2 size={10} /> {lib.arrangements.length} arrangements</Badge> : <Badge>{allNotes(lib.arrangements[0].song).length} notes</Badge>}
+                        {lib.audio ? <Badge tone="ok"><LuVolume2 size={10} /> audio</Badge> : <Badge>no audio</Badge>}
+                        {bestOf(lib) && <Badge tone="warn"><LuTrophy size={10} /> {Math.round(bestOf(lib)! * 100)}%</Badge>}
                       </div>
                     </button>
                   </li>
@@ -105,16 +123,17 @@ export function PlayPage() {
             </ul>
           </Card>
         </div>
-        <SetupPanel source={selected} onStart={(p) => setPlaying(p)} onChanged={refresh} />
+        <SetupPanel source={selected} onSelect={(arr) => setSelected((cur) => (cur?.kind === 'imported' ? { ...cur, arr } : cur))} onStart={(p) => setPlaying(p)} onChanged={refresh} />
       </div>
-      <ImportModal open={importOpen} onClose={() => setImportOpen(false)} onImported={async (rec) => { await refresh(); setSelected({ kind: 'imported', rec }); setImportOpen(false); }} />
     </div>
   );
 }
 
+const bestOf = (lib: LibrarySong) => { const b = lib.arrangements.map((a) => a.best?.accuracy ?? 0); const m = Math.max(0, ...b); return m > 0 ? m : null; };
+
 // ── Setup ────────────────────────────────────────────────────────────────
 
-function SetupPanel({ source, onStart, onChanged }: { source: Source | null; onStart: (p: { song: PlaySong; audio: Blob | null; offset: number; opts: PlayOptions; source: Source; bpm: number }) => void; onChanged: () => Promise<void> }) {
+function SetupPanel({ source, onSelect, onStart, onChanged }: { source: Source | null; onSelect: (a: LibraryArrangement) => void; onStart: (p: { song: PlaySong; audio: Blob | null; offset: number; opts: PlayOptions; source: Source; bpm: number }) => void; onChanged: () => Promise<unknown> }) {
   const [opts, setOpts] = useState<PlayOptions>(() => readJson(PREF_KEY, { speed: 1, fromSection: 0, toSection: 0, loop: false, useMic: true, anyOctave: false, guide: true, clickTrack: true, lowOnTop: true }));
   const [bpm, setBpm] = useState(80);
   const [audio, setAudio] = useState<Blob | null>(null);
@@ -124,14 +143,14 @@ function SetupPanel({ source, onStart, onChanged }: { source: Source | null; onS
   useEffect(() => {
     if (!source) return;
     if (source.kind === 'exercise') setBpm(source.ex.bpmStart);
-    setOffset(source.kind === 'imported' ? source.rec.offset : 0);
+    setOffset(source.kind === 'imported' ? source.lib.sync.offset : 0);
     setAudio(null);
-    if (source.kind === 'imported') void songStore.getAudio(source.rec.id).then(setAudio);
-  }, [source]);
+    if (source.kind === 'imported' && source.lib.audio) void library.getAudio(source.lib.audio.key).then(setAudio);
+  }, [source?.kind === 'imported' ? `${source.lib.id}|${source.lib.audio?.key}` : source]);
 
   const song = useMemo(() => {
     if (!source) return null;
-    if (source.kind === 'imported') return source.rec.song;
+    if (source.kind === 'imported') return source.arr.song;
     return songFromTabScore(source.ex.score, { id: source.ex.id, bpm, repeats: 2, arrangement: 'Exercise', source: 'exercise', chordName: chordNamer });
   }, [source, bpm]);
   useEffect(() => { if (song) setOpts((o) => ({ ...o, fromSection: 0, toSection: Math.max(0, song.sections.length - 1) })); }, [song?.id, song?.sections.length]);
@@ -140,23 +159,27 @@ function SetupPanel({ source, onStart, onChanged }: { source: Source | null; onS
 
   const notes = allNotes(song);
   const frets = notes.map((n) => n.fret);
-  const best = source.kind === 'imported' ? source.rec.best : readJson<Record<string, { accuracy: number }>>(BEST_KEY, {})[song.id];
+  const best = source.kind === 'imported' ? source.arr.best : readJson<Record<string, { accuracy: number }>>(BEST_KEY, {})[song.id];
 
   const attachAudio = async (f: File) => {
     if (source.kind !== 'imported') return;
-    await songStore.putAudio(source.rec.id, f);
-    await songStore.put({ ...source.rec, audioName: f.name });
+    const lib = source.lib;
+    const key = lib.audio?.key ?? `audio-${lib.id}`;
+    await library.putAudio(key, f);
+    await library.put({ ...lib, audio: { key, name: f.name, size: f.size, type: f.type }, sync: { ...lib.sync, method: 'manual' } });
     setAudio(f);
     await onChanged();
-    store.toast('Recording attached', `${f.name} will play with “${song.title}”. Adjust the sync offset if the notes run early or late.`, 'success');
+    store.toast('Recording attached', `${f.name} will play with “${lib.title}”. Adjust the sync offset if the notes run early or late.`, 'success');
   };
   const saveOffset = async (v: number) => {
     setOffset(v);
-    if (source.kind === 'imported') await songStore.put({ ...source.rec, offset: v });
+    if (source.kind === 'imported') await library.put({ ...source.lib, sync: { ...source.lib.sync, offset: v, method: 'manual' } });
   };
   const remove = async () => {
-    if (source.kind !== 'imported' || !window.confirm(`Remove “${song.title}” from this device?`)) return;
-    await songStore.remove(source.rec.id);
+    if (source.kind !== 'imported') return;
+    const n = source.lib.arrangements.length;
+    if (!window.confirm(`Remove “${source.lib.title}”${n > 1 ? ` (${n} arrangements)` : ''} and its recording from this device?`)) return;
+    await library.remove(source.lib.id);
     await onChanged();
   };
 
@@ -170,15 +193,20 @@ function SetupPanel({ source, onStart, onChanged }: { source: Source | null; onS
         {best && <Badge tone="warn"><LuTrophy size={10} /> best {Math.round(best.accuracy * 100)}%</Badge>}
       </div>
       <div className="space-y-4">
+        {source.kind === 'imported' && source.lib.arrangements.length > 1 && (
+          <Field label="Arrangement">
+            <Segmented size="sm" value={source.arr.id} onChange={(id) => { const a = source.lib.arrangements.find((x) => x.id === id); if (a) onSelect(a); }} aria-label="Arrangement" options={source.lib.arrangements.map((a) => ({ value: a.id, label: a.label }))} data-testid="play-arrangement" />
+          </Field>
+        )}
         {source.kind === 'exercise' && <Field label="Tempo"><Stepper value={bpm} onChange={setBpm} min={30} max={260} step={2} suffix="bpm" label="Exercise tempo" /></Field>}
         {source.kind === 'imported' && (
           <Field label="Recording" hint="Your own audio of this song (MP3, OGG, WAV, M4A). Stays on this device.">
             <div className="flex flex-wrap items-center gap-2">
               <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-ink-700 bg-ink-800 px-3 py-2 text-sm text-ink-100 hover:bg-ink-700">
-                <LuMusic size={14} /> {source.rec.audioName ? 'Replace audio' : 'Add audio'}
+                <LuMusic size={14} /> {source.lib.audio ? 'Replace audio' : 'Add audio'}
                 <input type="file" accept="audio/*,.ogg,.mp3,.wav,.m4a,.flac" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; if (f) void attachAudio(f); }} data-testid="play-audio" />
               </label>
-              <span className="truncate text-xs text-ink-400">{source.rec.audioName ?? 'Without audio, a click and guide tones play instead.'}</span>
+              <span className="truncate text-xs text-ink-400">{source.lib.audio?.name ?? 'Without audio, a click and guide tones play instead.'}</span>
             </div>
           </Field>
         )}
@@ -214,84 +242,6 @@ function SetupPanel({ source, onStart, onChanged }: { source: Source | null; onS
         <p className="text-xs text-ink-400">Tip: plug in or play close to the microphone, and use headphones when a recording is playing so the app hears your guitar, not the speakers.</p>
       </div>
     </Card>
-  );
-}
-
-// ── Import ───────────────────────────────────────────────────────────────
-
-function ImportModal({ open, onClose, onImported }: { open: boolean; onClose: () => void; onImported: (r: StoredSong) => void }) {
-  const [msg, setMsg] = useState<{ tone: 'warn' | 'info' | 'ok'; title: string; body: string } | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [gp, setGp] = useState<{ gpif: string; name: string; tracks: { index: number; name: string; strings: number }[] } | null>(null);
-  useEffect(() => { if (open) { setMsg(null); setGp(null); } }, [open]);
-
-  const finish = async (song: PlaySong, fileName: string, warnings: string[]) => {
-    const errs = validateSong(song);
-    if (errs.length) { setMsg({ tone: 'warn', title: 'Could not import', body: errs.join(' ') }); return; }
-    const rec: StoredSong = { id: song.id, song, offset: 0, addedAt: nowIso(), fileName };
-    await songStore.put(rec);
-    store.toast('Song imported', `${song.title}: ${allNotes(song).length} notes${warnings.length ? ` (${warnings.join(' ')})` : ''}`, 'success');
-    onImported(rec);
-  };
-
-  const handle = async (f: File) => {
-    setBusy(true); setMsg(null); setGp(null);
-    try {
-      const name = f.name.toLowerCase();
-      if (name.endsWith('.psarc') || name.endsWith('.sng')) {
-        setMsg({ tone: 'info', title: 'Rocksmith game files are encrypted', body: 'PSARC and SNG files are encrypted for the game, and this app does not break that encryption. If you made or downloaded a custom song, open it in the Rocksmith Custom Song Toolkit or EOF and export the arrangement XML (lead, rhythm or bass) plus the audio as OGG/WAV, then import the XML here and attach the audio.' });
-        return;
-      }
-      const id = uid('song');
-      if (name.endsWith('.gp')) {
-        const gpif = await gpifFromGpFile(new Uint8Array(await f.arrayBuffer()));
-        const tracks = gpTracks(gpif);
-        if (tracks.length > 1) { setGp({ gpif, name: f.name, tracks }); return; }
-        const r = songFromGpif(gpif, id);
-        if (!r.song) { setMsg({ tone: 'warn', title: 'Could not import', body: r.errors.join(' ') }); return; }
-        await finish(r.song, f.name, r.warnings);
-        return;
-      }
-      if (/\.(gp[345x]|gtp)$/.test(name)) { setMsg({ tone: 'info', title: 'Older Guitar Pro format', body: 'Guitar Pro 3–6 files use a closed binary format. Open the file in Guitar Pro 7/8 (or TuxGuitar) and save it as .gp, then import that.' }); return; }
-      const text = await readFile(f);
-      if (name.endsWith('.json')) {
-        const obj = JSON.parse(text) as PlaySong;
-        await finish({ ...obj, id }, f.name, []);
-        return;
-      }
-      if (name.endsWith('.xml')) {
-        const r = songFromRocksmithXml(text, id);
-        if (!r.song) { setMsg({ tone: 'warn', title: 'Could not import', body: r.errors.join(' ') }); return; }
-        await finish(r.song, f.name, r.warnings);
-        return;
-      }
-      setMsg({ tone: 'warn', title: 'Unsupported file', body: 'Import a Rocksmith arrangement .xml, a Guitar Pro 7/8 .gp, or a Guitar Mastery .json song file. Recordings are attached after importing.' });
-    } catch (e) {
-      setMsg({ tone: 'warn', title: 'Could not read the file', body: (e as Error).message });
-    } finally { setBusy(false); }
-  };
-
-  return (
-    <Modal open={open} onClose={onClose} title="Import a song" wide>
-      <div className="space-y-4">
-        <label className={cx('flex cursor-pointer flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-ink-600 px-6 py-8 text-center hover:border-accent-500', busy && 'opacity-50')}>
-          <LuUpload size={24} className="text-accent-300" />
-          <span className="font-medium text-ink-50">Choose a file</span>
-          <span className="text-xs text-ink-400">Rocksmith arrangement .xml · Guitar Pro 7/8 .gp · Guitar Mastery .json</span>
-          <input type="file" accept=".xml,.gp,.json,.psarc,.sng,.gp3,.gp4,.gp5,.gpx" className="sr-only" disabled={busy} onChange={(e) => { const f = e.target.files?.[0]; if (f) void handle(f); e.target.value = ''; }} data-testid="play-import-file" />
-        </label>
-        {gp && (
-          <div className="rounded-xl bg-ink-800 p-4">
-            <div className="mb-2 text-sm font-medium text-ink-50">Which track do you want to play?</div>
-            <div className="flex flex-wrap gap-2">
-              {gp.tracks.map((t) => <Button key={t.index} size="sm" onClick={() => { const r = songFromGpif(gp.gpif, uid('song'), t.index); if (r.song) void finish(r.song, gp.name, r.warnings); else setMsg({ tone: 'warn', title: 'Could not import', body: r.errors.join(' ') }); }}>{t.name} ({t.strings}-string)</Button>)}
-            </div>
-          </div>
-        )}
-        {msg && <Callout tone={msg.tone} title={msg.title}>{msg.body}</Callout>}
-        <Callout tone="info" title="About your files">Imported songs and recordings stay in this browser and are never uploaded. Only import material you have the right to use.</Callout>
-      </div>
-    </Modal>
   );
 }
 
@@ -423,7 +373,10 @@ function Stage({ song, audio, offset, opts, source, bpm, onExit }: { song: PlayS
     if (sum.total === 0) return;
     // Save best score and, for exercises, a practice record.
     if (source.kind === 'imported') {
-      if (!range.partial && (!source.rec.best || sum.accuracy > source.rec.best.accuracy)) void songStore.put({ ...source.rec, best: { accuracy: sum.accuracy, score: sum.score, at: nowIso() } });
+      if (!range.partial && (!source.arr.best || sum.accuracy > source.arr.best.accuracy)) {
+        const best = { accuracy: sum.accuracy, score: sum.score, at: nowIso() };
+        void library.get(source.lib.id).then((lib) => lib && library.put({ ...lib, arrangements: lib.arrangements.map((a) => (a.id === source.arr.id ? { ...a, best } : a)) }));
+      }
     } else if (!range.partial) {
       const bests = readJson<Record<string, { accuracy: number; score: number }>>(BEST_KEY, {});
       if (!bests[song.id] || sum.accuracy > bests[song.id].accuracy) { bests[song.id] = { accuracy: sum.accuracy, score: sum.score }; writeJson(BEST_KEY, bests); }

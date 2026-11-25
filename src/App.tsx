@@ -18,6 +18,7 @@ import { AccountPage, SettingsPage } from '@/pages/Settings';
 import { TheoryPage } from '@/pages/Theory';
 import { ChordFinderPage } from '@/pages/ChordFinder';
 import { PlayPage } from '@/pages/Play';
+import { ImportPage } from '@/pages/Import';
 
 const ROUTES: { path: string; render: (params: Record<string, string>) => ReactNode; label: string }[] = [
   { path: '/', render: () => <DashboardPage />, label: 'Dashboard' },
@@ -40,6 +41,7 @@ const ROUTES: { path: string; render: (params: Record<string, string>) => ReactN
   { path: '/improvisation', render: () => <ImprovisationPage />, label: 'Improvisation' },
   { path: '/jam', render: () => <JamPage />, label: 'Jam Room' },
   { path: '/play', render: () => <PlayPage />, label: 'Play Mode' },
+  { path: '/import', render: () => <ImportPage />, label: 'Import Songs' },
   { path: '/progress', render: () => <ProgressPage />, label: 'Progress' },
   { path: '/settings', render: () => <SettingsPage />, label: 'Settings' },
   { path: '/account', render: () => <AccountPage />, label: 'Account' },

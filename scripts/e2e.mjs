@@ -100,7 +100,7 @@ const stored = (page, collection) => page.evaluate((c) => {
 
 test('every route renders without errors', async (b) => {
   const page = await newPage(b);
-  const routes = ['/', '/path', '/lessons', '/lessons/l0-tuning', '/theory', '/tuner', '/metronome', '/fretboard', '/scales', '/chords', '/chord-finder', '/play', '/practice', '/technique-lab', '/fretboard-trainer', '/ear-training', '/analyzer', '/tab-editor', '/improvisation', '/jam', '/progress', '/settings', '/account'];
+  const routes = ['/', '/path', '/lessons', '/lessons/l0-tuning', '/theory', '/tuner', '/metronome', '/fretboard', '/scales', '/chords', '/chord-finder', '/play', '/import', '/practice', '/technique-lab', '/fretboard-trainer', '/ear-training', '/analyzer', '/tab-editor', '/improvisation', '/jam', '/progress', '/settings', '/account'];
   for (const r of routes) {
     await go(page, r);
     await page.waitForTimeout(150);
@@ -503,30 +503,234 @@ test('chord finder: fretboard shape, typed notes and listening', async () => {
 }, { ownBrowser: true });
 
 const DEMO_XML = path.join(root, 'tests/fixtures/demo-arrangement.xml');
+const demoXml = fs.readFileSync(DEMO_XML, 'utf8');
+const arrangementXml = (arr) => demoXml.replace('<arrangement>Lead</arrangement>', `<arrangement>${arr}</arrangement>`);
 
-test('play mode: import, practice run, pause/resume, unsupported files', async (b) => {
+/** A recording that matches the demo chart: plucks at every note/chord time (shifted by `shift` seconds of silence). */
+function demoRecording(shift = 0, sr = 22050, seconds = 16) {
+  const times = [...demoXml.matchAll(/<(?:note|chord) time="([\d.]+)"/g)].map((m) => Number(m[1]));
+  const out = new Float32Array(Math.round(seconds * sr));
+  let s = 3;
+  const rnd = () => ((s = (Math.imul(s, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff) * 2 - 1;
+  for (const t of times) {
+    const at = Math.round((t + shift) * sr);
+    for (let k = 0; k < sr * 0.2 && at + k < out.length; k++) out[at + k] += (0.5 * Math.sin(2 * Math.PI * 220 * k / sr) + 0.2 * rnd()) * Math.exp(-k / (sr * 0.04));
+  }
+  return wav(Array.from(out), sr);
+}
+
+const MANIFEST = JSON.stringify({ Entries: { X: { Attributes: { SongName: 'Demo Riff', ArtistName: 'GMA Band', AlbumName: 'Fixtures', SongYear: 2026, ArrangementName: 'Lead', SongKey: 'demoriff', SongLength: 16 } } } });
+
+async function demoPsarc(opts = {}) {
+  const { buildPsarc, riffWave } = await import('../tests/helpers/psarc-builder.ts');
+  return Buffer.from(buildPsarc([
+    { path: 'songs/arr/demoriff_lead.xml', data: arrangementXml('Lead') },
+    { path: 'songs/arr/demoriff_bass.xml', data: arrangementXml('Bass') },
+    { path: 'songs/arr/demoriff_showlights.xml', data: '<?xml version="1.0"?><showlights count="0"/>' },
+    { path: 'manifests/songs_dlc_demoriff/demoriff_lead.json', data: MANIFEST },
+    { path: 'audio/windows/demoriff.wav', data: demoRecording(0) },
+    { path: 'audio/windows/987654.wem', data: riffWave(0xffff) },
+    { path: 'songs/bin/generic/demoriff_lead.sng', data: Buffer.from([0x4a, 0, 0, 0, 3, 0, 0, 0]) },
+    { path: 'gfxassets/album_art/album_demoriff_64.dds', data: Buffer.from('DDS 0000') },
+  ], opts));
+}
+
+const libraryRecords = (page) => page.evaluate(() => new Promise((res) => {
+  const q = indexedDB.open('gma-local');
+  q.onsuccess = () => { const t = q.result.transaction('library').objectStore('library').getAll(); t.onsuccess = () => res(t.result); };
+}));
+const audioCount = (page) => page.evaluate(() => new Promise((res) => {
+  const q = indexedDB.open('gma-local');
+  q.onsuccess = () => { const t = q.result.transaction('audio').objectStore('audio').count(); t.onsuccess = () => res(t.result); };
+}));
+const canvasInk = (page, id) => page.evaluate((tid) => { const c = document.querySelector(`[data-testid=${tid}]`); const g = c.getContext('2d'); const d = g.getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 0; i < d.length; i += 400) if (d[i] + d[i + 1] + d[i + 2] > 300) n++; return n; }, id);
+
+async function importFiles(page, files, testid = 'import-files') {
+  await go(page, '/import');
+  await page.getByTestId(testid).setInputFiles(files);
+}
+
+test('importer: PSARC package → grouped song, synced preview, saved and reopened', async (b) => {
   const page = await newPage(b);
-  await go(page, '/play');
-  await page.getByTestId('play-import').click();
-  await page.getByTestId('play-import-file').setInputFiles({ name: 'song.psarc', mimeType: 'application/octet-stream', buffer: Buffer.from('PSAR') });
-  expect((await page.locator('[role=dialog]').textContent())?.includes('encrypted'), 'PSARC explained');
-  await page.getByTestId('play-import-file').setInputFiles(DEMO_XML);
+  await importFiles(page, { name: 'GMA_Band_-_Demo_Riff_p.psarc', mimeType: 'application/octet-stream', buffer: await demoPsarc() });
+  const preview = page.getByTestId('import-preview');
+  await preview.waitFor({ timeout: 20000 });
+  expect(await page.getByTestId('import-title').inputValue() === 'Demo Riff', 'title from the package manifest');
+  expect(await page.getByTestId('import-artist').inputValue() === 'GMA Band', 'artist from the manifest');
+  const arrs = await page.getByTestId('import-arrangements').textContent();
+  expect(arrs.includes('Lead') && arrs.includes('Bass') && !arrs.includes('Showlights'), `lead and bass grouped (${arrs})`);
+  expect((await page.getByTestId('import-audio').locator('option:checked').textContent()) === 'demoriff.wav', 'package audio selected');
+  await page.waitForFunction(() => /lines up|fits the recording/.test(document.querySelector('[data-testid=import-sync]')?.textContent ?? ''), null, { timeout: 15000 });
+  expect((await page.getByTestId('import-sync').textContent()).includes('matches the chart'), 'recording length checked against the chart');
+  // Synchronised playback and seeking.
+  await page.getByTestId('import-play').click();
+  await page.waitForTimeout(1200);
+  const t1 = await page.getByTestId('import-time').textContent();
+  expect(!t1.startsWith('0:00'), `preview clock advances with the audio (${t1})`);
+  await page.getByTestId('import-seek').fill('10');
+  await page.waitForTimeout(400);
+  const playing = await page.evaluate(() => [...document.querySelectorAll('audio')].length === 0); // detached Audio element, so just check time
+  void playing;
+  const t2 = await page.getByTestId('import-time').textContent();
+  expect(t2.startsWith('0:10') || t2.startsWith('0:11'), `seek moves chart and audio (${t2})`);
+  expect(await canvasInk(page, 'import-canvas') > 20, 'notes drawn on the preview highway');
+  await page.getByTestId('import-play').click();
+  await page.getByTestId('import-arr-bass').click();
+  // File report: every entry has a status; component report shown.
+  const report = page.getByTestId('import-file-report').first();
+  expect(await report.getAttribute('data-status') === 'partial', 'archive partly imported');
+  await report.locator('summary').click();
+  const rows = await report.getByTestId('import-entries').locator('tbody tr').evaluateAll((trs) => trs.map((tr) => [tr.cells[0].textContent, tr.dataset.status]));
+  const st = Object.fromEntries(rows.map(([p, s]) => [p.split('/').pop(), s]));
+  expect(Object.keys(st).length === 8, `all 8 entries listed (${JSON.stringify(st)})`);
+  expect(st['987654.wem'] === 'unsupported' && st['demoriff_lead.sng'] === 'unsupported' && st['demoriff_lead.json'] === 'metadata' && st['demoriff.wav'] === 'imported', JSON.stringify(st));
+  expect(await report.locator('[data-component=toc][data-state=ok]').count() === 1, 'TOC component ok');
+  // Save and open in Play mode.
+  await page.getByTestId('import-save').click();
+  await page.getByTestId('import-open-play').click();
+  await page.getByTestId('play-setup').waitFor();
+  const setup = await page.getByTestId('play-setup').textContent();
+  expect(setup.includes('Demo Riff') && setup.includes('demoriff.wav'), `song with audio selected in Play mode (${setup.slice(0, 160)})`);
+  await page.getByTestId('play-arrangement').getByRole('radio', { name: 'Bass' }).click();
+  expect((await page.getByTestId('play-setup').textContent()).includes('Bass E Standard'), 'bass arrangement switched');
+  // Reopen later without importing again.
+  await page.reload();
   await page.getByTestId('play-imported').waitFor();
-  expect((await page.getByTestId('play-setup').textContent())?.includes('Demo Riff in A Minor'), 'imported song selected');
+  expect((await page.getByTestId('play-imported').textContent()).includes('2 arrangements'), 'song persists with both arrangements');
+  const recs = await libraryRecords(page);
+  expect(recs.length === 1 && recs[0].arrangements.length === 2 && recs[0].audio?.name === 'demoriff.wav' && recs[0].sync.method === 'chart', `library record (${JSON.stringify(recs.map((r) => ({ a: r.arrangements.length, audio: r.audio?.name, sync: r.sync })))})`);
+  expect(await audioCount(page) === 1, 'recording stored once');
+  expect(page.errors.length === 0, page.errors.join('\n'));
+});
+
+test('importer: loose XML + WAV files, duplicate detection, Play mode run', async (b) => {
+  const page = await newPage(b);
+  const loose = [
+    { name: 'demo_lead.xml', mimeType: 'text/xml', buffer: Buffer.from(arrangementXml('Lead')) },
+    { name: 'demo_rhythm.xml', mimeType: 'text/xml', buffer: Buffer.from(arrangementXml('Rhythm')) },
+    { name: 'Demo Riff in A Minor.wav', mimeType: 'audio/wav', buffer: demoRecording(0.4) },
+    { name: 'demo_preview.wav', mimeType: 'audio/wav', buffer: toneWav(1) },
+  ];
+  await importFiles(page, loose);
+  await page.getByTestId('import-preview').waitFor({ timeout: 20000 });
+  expect((await page.getByTestId('import-songs').locator('li').count()) === 1, 'one song from two loose arrangements');
+  expect((await page.getByTestId('import-audio').locator('option:checked').textContent()) === 'Demo Riff in A Minor.wav', 'full recording matched by name, preview not chosen');
+  await page.waitForFunction(() => /shifted by [−-]0\.(39|40|41) s/.test(document.querySelector('[data-testid=import-sync]')?.textContent ?? ''), null, { timeout: 15000 });
+  const offset = Number(await page.getByTestId('import-offset').inputValue());
+  expect(Math.abs(offset + 0.4) < 0.015, `offset detected: recording starts 0.4 s late → −0.40 s (${offset})`);
+  await page.getByTestId('import-save').click();
+  await page.getByTestId('import-open-play').waitFor();
+  // Same files again: recognised as a duplicate, can replace.
+  await importFiles(page, loose);
+  await page.getByTestId('import-duplicate').waitFor({ timeout: 20000 });
+  await page.getByTestId('import-replace').click();
+  await page.getByTestId('import-open-play').click();
+  expect((await libraryRecords(page)).length === 1, 'replacing keeps a single library record');
+  expect(await audioCount(page) === 1, 'old recording released on replace');
+  // Play it (no mic), pause/resume, exit.
   const sw = page.getByRole('switch', { name: 'Score with the microphone' });
   if ((await sw.getAttribute('aria-checked')) === 'true') await sw.click();
   await page.getByTestId('play-start').click();
   await page.getByTestId('play-canvas').waitFor();
   await page.waitForTimeout(3500);
-  const ink = await page.evaluate(() => { const c = document.querySelector('[data-testid=play-canvas]'); const g = c.getContext('2d'); const d = g.getImageData(0, 0, c.width, c.height).data; let colored = 0; for (let i = 0; i < d.length; i += 400) if (d[i] + d[i + 1] + d[i + 2] > 300) colored++; return colored; });
-  expect(ink > 20, `highway is drawn (${ink} bright samples)`);
+  expect(await canvasInk(page, 'play-canvas') > 20, 'highway is drawn');
   await page.getByTestId('play-pause').click();
-  expect((await page.getByTestId('play-stage').textContent())?.includes('Paused'), 'paused');
+  expect((await page.getByTestId('play-stage').textContent()).includes('Paused'), 'paused');
   await page.getByTestId('play-pause').click();
   await page.getByTestId('play-exit').click();
-  await page.reload();
-  await page.getByTestId('play-imported').waitFor();
-  expect((await page.getByTestId('play-imported').textContent())?.includes('Demo Riff'), 'imported song persists in IndexedDB');
+  expect(page.errors.length === 0, page.errors.join('\n'));
+});
+
+test('importer: encrypted and damaged archives report which component is blocking', async (b) => {
+  const page = await newPage(b);
+  const files = [
+    { name: 'Some_Band_-_Some_Song_p.psarc', mimeType: 'application/octet-stream', buffer: await demoPsarc({ encryptedToc: true }) },
+    { name: 'broken.psarc', mimeType: 'application/octet-stream', buffer: (await demoPsarc()).subarray(0, 20) },
+    { name: 'song.ogg', mimeType: 'audio/ogg', buffer: Buffer.concat([Buffer.from('OggS'), Buffer.alloc(100)]) },
+    { name: 'old.gp5', mimeType: 'application/octet-stream', buffer: Buffer.from('FICHIER GUITAR PRO v5.00') },
+  ];
+  const real = fs.readdirSync('/mnt/user-data/uploads').find?.((f) => f.endsWith('.psarc'));
+  if (real) files.push({ name: real.replace(/^[0-9a-f]+-/, ''), mimeType: 'application/octet-stream', buffer: fs.readFileSync(path.join('/mnt/user-data/uploads', real)) });
+  await importFiles(page, files);
+  await page.getByTestId('import-files-report').waitFor({ timeout: 20000 });
+  expect((await page.getByText('No playable songs in this selection').count()) === 1, 'explains that no chart was found');
+  const enc = page.getByTestId('import-file-report').nth(0);
+  expect(await enc.getAttribute('data-status') === 'unsupported', 'encrypted archive: not supported');
+  expect((await enc.textContent()).includes('Blocked by: table of contents'), 'names the blocking component');
+  await enc.locator('summary').click();
+  const comps = await enc.getByTestId('import-components').locator('li').evaluateAll((ls) => ls.map((l) => `${l.dataset.component}:${l.dataset.state}`));
+  expect(JSON.stringify(comps) === JSON.stringify(['header:ok', 'compression:ok', 'toc:unsupported', 'blocks:unavailable', 'manifest:unavailable', 'data:unavailable']), comps.join(' '));
+  expect((await enc.textContent()).includes('Some Band — Some Song'), 'title guessed from the file name');
+  const broken = page.getByTestId('import-file-report').nth(1);
+  expect(await broken.getAttribute('data-status') === 'error' && (await broken.textContent()).includes('header'), 'damaged header attributed to the header');
+  expect((await page.getByTestId('import-file-report').nth(3).textContent()).includes('Guitar Pro 7/8'), 'legacy Guitar Pro explained');
+  expect((await page.getByText('About encrypted Rocksmith 2014 archives').count()) === 1, 'guidance shown');
+  if (real) {
+    const r = page.getByTestId('import-file-report').nth(4);
+    console.log(`      (uploaded ${real.replace(/^[0-9a-f]+-/, '')}: ${await r.getAttribute('data-status')} — ${(await r.locator('p').first().textContent()).slice(0, 120)})`);
+  }
+  expect(page.errors.length === 0, page.errors.join('\n'));
+});
+
+function toneWav(seconds, sr = 8000) {
+  const n = Math.round(seconds * sr), b = Buffer.alloc(44 + n * 2);
+  b.write('RIFF', 0); b.writeUInt32LE(36 + n * 2, 4); b.write('WAVEfmt ', 8); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22);
+  b.writeUInt32LE(sr, 24); b.writeUInt32LE(sr * 2, 28); b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34); b.write('data', 36); b.writeUInt32LE(n * 2, 40);
+  for (let i = 0; i < n; i++) b.writeInt16LE(Math.round(Math.sin(i * 2 * Math.PI * 110 / sr) * 3000), 44 + i * 2);
+  return b;
+}
+
+test('importer: folder selection, cancellation and Guitar Pro', async (b) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gma-folder-'));
+  const song = path.join(dir, 'DemoSong');
+  fs.mkdirSync(path.join(song, 'songs/arr'), { recursive: true });
+  fs.mkdirSync(path.join(song, 'audio/windows'), { recursive: true });
+  fs.writeFileSync(path.join(song, 'songs/arr/demo_lead.xml'), arrangementXml('Lead'));
+  fs.writeFileSync(path.join(song, 'songs/arr/demo_bass.xml'), arrangementXml('Bass'));
+  fs.writeFileSync(path.join(song, 'songs/arr/demo_vocals.xml'), '<?xml version="1.0"?><vocals count="0"/>');
+  fs.writeFileSync(path.join(song, 'audio/windows/demo.wav'), toneWav(2));
+  fs.writeFileSync(path.join(song, 'audio/windows/demo_preview.wav'), toneWav(0.5));
+  const page = await newPage(b);
+  await importFiles(page, song, 'import-folder');
+  await page.getByTestId('import-preview').waitFor({ timeout: 20000 });
+  expect((await page.getByTestId('import-songs').locator('li').count()) === 1, 'folder → one song');
+  expect((await page.getByTestId('import-audio').locator('option:checked').textContent()) === 'demo.wav', 'full recording chosen over the preview');
+  expect((await page.getByTestId('import-files-report').textContent()).includes('Lyrics'), 'vocals file listed with its reason');
+  fs.rmSync(dir, { recursive: true, force: true });
+
+  // Cancellation: a large LZMA archive keeps the worker busy long enough to cancel.
+  const { buildPsarc } = await import('../tests/helpers/psarc-builder.ts');
+  const big = Buffer.alloc(3 * 1024 * 1024);
+  for (let i = 0; i < big.length; i++) big[i] = (i * 31 + (i >> 9)) & 0x7f;
+  big.write('OggS', 0);
+  const slow = Buffer.from(buildPsarc([1, 2, 3, 4].map((n) => ({ path: `audio/big${n}.ogg`, data: big })), { compression: 'lzma' }));
+  await go(page, '/import');
+  // The archive imports in a fraction of a second, so press Cancel the moment it appears.
+  await page.evaluate(() => {
+    const mo = new MutationObserver(() => { const btn = document.querySelector('[data-testid=import-cancel]'); if (btn) { mo.disconnect(); btn.click(); } });
+    mo.observe(document.body, { childList: true, subtree: true });
+  });
+  await page.getByTestId('import-files').setInputFiles({ name: 'big.psarc', mimeType: 'application/octet-stream', buffer: slow });
+  await page.getByText('Import cancelled').waitFor();
+  await page.waitForTimeout(800);
+  expect((await page.getByTestId('import-progress').count()) === 0 && (await page.getByTestId('import-preview').count()) === 0, 'nothing left after cancel');
+
+  // Guitar Pro 7/8: every track becomes an arrangement of one song.
+  const { deflateRawSync } = await import('node:zlib');
+  const gpif = `<GPIF><Score><Title><![CDATA[GP Import Test]]></Title><Artist><![CDATA[Fixture]]></Artist></Score><MasterTrack><Automations><Automation><Type>Tempo</Type><Bar>0</Bar><Position>0</Position><Value>100 2</Value></Automation></Automations></MasterTrack><Tracks><Track id="0"><Name>Lead</Name><Staves><Staff><Properties><Property name="Tuning"><Pitches>40 45 50 55 59 64</Pitches></Property></Properties></Staff></Staves></Track><Track id="1"><Name>Bass</Name><Staves><Staff><Properties><Property name="Tuning"><Pitches>28 33 38 43</Pitches></Property></Properties></Staff></Staves></Track></Tracks><MasterBars><MasterBar><Time>4/4</Time><Bars>0 1</Bars></MasterBar></MasterBars><Bars><Bar id="0"><Voices>0 -1 -1 -1</Voices></Bar><Bar id="1"><Voices>1 -1 -1 -1</Voices></Bar></Bars><Voices><Voice id="0"><Beats>0 0 0 0</Beats></Voice><Voice id="1"><Beats>1</Beats></Voice></Voices><Beats><Beat id="0"><Rhythm ref="0"/><Notes>0</Notes></Beat><Beat id="1"><Rhythm ref="1"/><Notes>1</Notes></Beat></Beats><Notes><Note id="0"><Properties><Property name="String"><String>1</String></Property><Property name="Fret"><Fret>2</Fret></Property></Properties></Note><Note id="1"><Properties><Property name="String"><String>0</String></Property><Property name="Fret"><Fret>5</Fret></Property></Properties></Note></Notes><Rhythms><Rhythm id="0"><NoteValue>Quarter</NoteValue></Rhythm><Rhythm id="1"><NoteValue>Whole</NoteValue></Rhythm></Rhythms></GPIF>`;
+  const name = Buffer.from('Content/score.gpif');
+  const data = deflateRawSync(Buffer.from(gpif));
+  const lh = Buffer.alloc(30); lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(8, 8); lh.writeUInt32LE(data.length, 18); lh.writeUInt32LE(gpif.length, 22); lh.writeUInt16LE(name.length, 26);
+  const ch = Buffer.alloc(46); ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(8, 10); ch.writeUInt32LE(data.length, 20); ch.writeUInt32LE(gpif.length, 24); ch.writeUInt16LE(name.length, 28); ch.writeUInt32LE(0, 42);
+  const localLen = 30 + name.length + data.length;
+  const end = Buffer.alloc(22); end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(1, 8); end.writeUInt16LE(1, 10); end.writeUInt32LE(46 + name.length, 12); end.writeUInt32LE(localLen, 16);
+  const zip = Buffer.concat([lh, name, data, ch, name, end]);
+  await go(page, '/import');
+  await page.getByTestId('import-files').setInputFiles({ name: 'fixture.gp', mimeType: 'application/octet-stream', buffer: zip });
+  await page.getByTestId('import-preview').waitFor({ timeout: 20000 });
+  const arrs = await page.getByTestId('import-arrangements').textContent();
+  expect(arrs.includes('Lead') && arrs.includes('Bass'), `GP tracks as arrangements (${arrs})`);
+  expect(await page.getByTestId('import-title').inputValue() === 'GP Import Test', 'GP title');
   expect(page.errors.length === 0, page.errors.join('\n'));
 });
 
@@ -534,10 +738,10 @@ test('play mode: live microphone scoring and best score', async () => {
   const b = await launch(A2);
   try {
     const page = await newPage(b);
-    await go(page, '/play');
-    await page.getByTestId('play-import').click();
-    await page.getByTestId('play-import-file').setInputFiles(DEMO_XML);
-    await page.getByTestId('play-imported').waitFor();
+    await importFiles(page, DEMO_XML);
+    await page.getByTestId('import-save').click();
+    await page.getByTestId('import-open-play').click();
+    await page.getByTestId('play-setup').waitFor();
     const sw = page.getByRole('switch', { name: 'Score with the microphone' });
     if ((await sw.getAttribute('aria-checked')) !== 'true') await sw.click();
     await page.getByTestId('play-start').click();
@@ -548,8 +752,9 @@ test('play mode: live microphone scoring and best score', async () => {
     // The fake microphone plays a steady A2, which matches only the riff's open-A notes.
     expect(acc > 0 && acc < 60, `partial accuracy expected from a constant A2, got ${acc}% (${txt})`);
     await page.getByRole('button', { name: 'Back to songs' }).click();
-    const recs = await page.evaluate(async () => { const r = await new Promise((res) => { const q = indexedDB.open('gma-local'); q.onsuccess = () => { const t = q.result.transaction('songs').objectStore('songs').getAll(); t.onsuccess = () => res(t.result); }; }); return r; });
-    expect(recs.length === 1 && recs[0].best && recs[0].best.accuracy > 0, 'best score stored for the song');
+    await page.waitForTimeout(300);
+    const recs = await libraryRecords(page);
+    expect(recs.length === 1 && recs[0].arrangements[0].best?.accuracy > 0, 'best score stored on the arrangement');
     // Exercise run records a Technique Lab entry.
     await go(page, '/play?exercise=ex-chromatic-1234');
     await page.waitForTimeout(300);
@@ -558,24 +763,31 @@ test('play mode: live microphone scoring and best score', async () => {
   } finally { await b.close(); }
 }, { ownBrowser: true, slow: true });
 
-test('play mode: Guitar Pro import', async (b) => {
-  const { deflateRawSync } = await import('node:zlib');
-  const gpif = `<GPIF><Score><Title><![CDATA[GP Import Test]]></Title><Artist><![CDATA[Fixture]]></Artist></Score><MasterTrack><Automations><Automation><Type>Tempo</Type><Bar>0</Bar><Position>0</Position><Value>100 2</Value></Automation></Automations></MasterTrack><Tracks><Track id="0"><Name>Lead</Name><Staves><Staff><Properties><Property name="Tuning"><Pitches>40 45 50 55 59 64</Pitches></Property></Properties></Staff></Staves></Track><Track id="1"><Name>Bass</Name><Staves><Staff><Properties><Property name="Tuning"><Pitches>28 33 38 43</Pitches></Property></Properties></Staff></Staves></Track></Tracks><MasterBars><MasterBar><Time>4/4</Time><Bars>0 1</Bars></MasterBar></MasterBars><Bars><Bar id="0"><Voices>0 -1 -1 -1</Voices></Bar><Bar id="1"><Voices>1 -1 -1 -1</Voices></Bar></Bars><Voices><Voice id="0"><Beats>0 0 0 0</Beats></Voice><Voice id="1"><Beats>1</Beats></Voice></Voices><Beats><Beat id="0"><Rhythm ref="0"/><Notes>0</Notes></Beat><Beat id="1"><Rhythm ref="1"/><Notes>1</Notes></Beat></Beats><Notes><Note id="0"><Properties><Property name="String"><String>1</String></Property><Property name="Fret"><Fret>2</Fret></Property></Properties></Note><Note id="1"><Properties><Property name="String"><String>0</String></Property><Property name="Fret"><Fret>5</Fret></Property></Properties></Note></Notes><Rhythms><Rhythm id="0"><NoteValue>Quarter</NoteValue></Rhythm><Rhythm id="1"><NoteValue>Whole</NoteValue></Rhythm></Rhythms></GPIF>`;
-  const name = Buffer.from('Content/score.gpif');
-  const data = deflateRawSync(Buffer.from(gpif));
-  const lh = Buffer.alloc(30); lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(8, 8); lh.writeUInt32LE(data.length, 18); lh.writeUInt32LE(gpif.length, 22); lh.writeUInt16LE(name.length, 26);
-  const ch = Buffer.alloc(46); ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(8, 10); ch.writeUInt32LE(data.length, 20); ch.writeUInt32LE(gpif.length, 24); ch.writeUInt16LE(name.length, 28); ch.writeUInt32LE(0, 42);
-  const localLen = 30 + name.length + data.length;
-  const end = Buffer.alloc(22); end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(1, 8); end.writeUInt16LE(1, 10); end.writeUInt32LE(46 + name.length, 12); end.writeUInt32LE(localLen, 16);
-  const zip = Buffer.concat([lh, name, data, ch, name, end]);
+test('library: version-1 songs are migrated into the song library', async (b) => {
   const page = await newPage(b);
+  const xml = demoXml;
+  // Write a v1 database (one record per arrangement), then load the app.
+  await page.evaluate(async (x) => {
+    await new Promise((r) => { const d = indexedDB.deleteDatabase('gma-local'); d.onsuccess = d.onerror = d.onblocked = () => r(); });
+    await new Promise((res) => {
+      const q = indexedDB.open('gma-local', 1);
+      q.onupgradeneeded = () => { q.result.createObjectStore('songs', { keyPath: 'id' }); q.result.createObjectStore('audio'); };
+      q.onsuccess = () => {
+        const song = (arr) => ({ format: 'gma-song', version: 1, id: 's-' + arr, title: 'Old Song', artist: 'Someone', arrangement: arr, tuning: { name: 'E Standard', strings: [40, 45, 50, 55, 59, 64] }, capo: 0, duration: 10, averageTempo: 120, beats: [], sections: [], events: [{ kind: 'note', time: 1, string: 0, fret: 3, sustain: 0, techniques: [] }], source: 'rocksmith-xml' });
+        const t = q.result.transaction(['songs', 'audio'], 'readwrite');
+        t.objectStore('songs').put({ id: 'a', song: song('Lead'), offset: 0.25, addedAt: '2026-01-01T00:00:00Z', fileName: 'Old', group: 'g1', order: 0, audioRef: 'g1', audioName: 'old.wav', best: { accuracy: 0.8, score: 100, at: 'x' } });
+        t.objectStore('songs').put({ id: 'b', song: song('Bass'), offset: 0.25, addedAt: '2026-01-01T00:00:00Z', fileName: 'Old', group: 'g1', order: 1, audioRef: 'g1', audioName: 'old.wav' });
+        t.objectStore('audio').put(new Blob(['RIFF']), 'g1');
+        t.oncomplete = () => { q.result.close(); res(); };
+      };
+    });
+  }, xml);
+  await page.reload();
   await go(page, '/play');
-  await page.getByTestId('play-import').click();
-  await page.getByTestId('play-import-file').setInputFiles({ name: 'fixture.gp', mimeType: 'application/octet-stream', buffer: zip });
-  await page.getByRole('button', { name: /^Bass/ }).click();
   await page.getByTestId('play-imported').waitFor();
-  const setup = await page.getByTestId('play-setup').textContent();
-  expect(setup?.includes('GP Import Test') && setup.includes('Bass'), `GP track imported (${setup?.slice(0, 120)})`);
+  expect((await page.getByTestId('play-imported').textContent()).includes('Old Song') && (await page.getByTestId('play-imported').textContent()).includes('2 arrangements'), 'migrated song listed once with both arrangements');
+  const recs = await libraryRecords(page);
+  expect(recs.length === 1 && recs[0].sync.offset === 0.25 && recs[0].audio.key === 'g1' && recs[0].arrangements[0].best.accuracy === 0.8, JSON.stringify(recs[0]?.sync));
   expect(page.errors.length === 0, page.errors.join('\n'));
 });
 

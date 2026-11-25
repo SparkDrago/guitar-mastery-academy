@@ -14,7 +14,10 @@ An honest list of what the current build does not do, or does only partly. Nothi
 
 ## Play mode and imports
 
-- **Rocksmith .psarc/.sng files are not supported.** They are encrypted for the game and the app does not circumvent that encryption. Custom-song authors can export the open arrangement XML (Rocksmith Custom Song Toolkit, EOF) and the audio (OGG/WAV), which the app imports.
+- **PSARC archives:** unencrypted archives are read fully in the browser (zlib, LZMA or stored blocks; manifest, name-hash and layout checks). **Rocksmith 2014 archives encrypt their table of contents** (flag 0x4); the importer reads and reports the header and compression, and marks the table of contents as unsupported and the block table, manifest and data as unreachable. It does not decrypt game files. Import the song's arrangement XMLs with its OGG/WAV audio instead.
+- Inside readable archives, these are listed but not used: `.sng` charts (encrypted per file in Rocksmith 2014), Wwise audio (`.wem`) and sound banks (`.bnk`), which browsers cannot decode, vocals/lyrics and showlights XML, artwork, and game data. Each appears in the import report with its reason.
+- Automatic sync confirms or corrects the chart-to-recording offset within ±8 s from note onsets. A strictly repetitive part can fit equally well one beat away; the importer then says the result is ambiguous and the offset should be checked by ear. It does not stretch the timing for recordings of a different tempo or version.
+- OGG Vorbis playback depends on the browser (older Safari cannot decode it); WAV works everywhere.
 - Guitar Pro 3–6 (.gp3/.gp4/.gp5/.gpx) are not imported; save as Guitar Pro 7/8 (.gp). Only the first voice of one track is used; tuplets beyond simple ratios, grace notes, and some techniques (whammy, rasgueado) are ignored.
 - Play-mode scoring is single-microphone pitch analysis: single notes use YIN pitch detection, chords use a 12-bin pitch-class profile and count when all but one chord tone sound. It cannot verify string choice, fingering or muting, and loud backing audio through speakers can confuse it (use headphones).
 - Imported songs and recordings are stored only in this browser (IndexedDB), are not synced and are lost if site data is cleared. Only import material you have the right to use.

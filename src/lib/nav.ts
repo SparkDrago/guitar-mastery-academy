@@ -1,7 +1,7 @@
 /** Navigation structure shared by the sidebar, mobile menu and command search. */
 import {
   LuLayoutDashboard, LuRoute, LuBookOpen, LuGraduationCap, LuGuitar, LuLayers, LuGrid3X3, LuZap, LuWandSparkles, LuRadio,
-  LuEar, LuScanSearch, LuGamepad2, LuGauge, LuTimer, LuCalendar, LuChartLine, LuSettings, LuMap, LuAudioLines, LuPenLine,
+  LuEar, LuScanSearch, LuGamepad2, LuImport, LuGauge, LuTimer, LuCalendar, LuChartLine, LuSettings, LuMap, LuAudioLines, LuPenLine,
 } from 'react-icons/lu';
 
 export interface NavItem {
@@ -35,7 +35,8 @@ export const NAV: { group: string; items: NavItem[] }[] = [
     { to: '/tab-editor', label: 'Tab Editor', icon: LuPenLine, description: 'Write tabs and exercises' },
   ] },
   { group: 'Play', items: [
-    { to: '/play', label: 'Play Mode', icon: LuGamepad2, description: 'Note highway with live scoring; import songs' },
+    { to: '/play', label: 'Play Mode', icon: LuGamepad2, description: 'Note highway with live scoring' },
+    { to: '/import', label: 'Import Songs', icon: LuImport, description: 'Add songs from PSARC, Rocksmith XML + OGG/WAV, Guitar Pro' },
     { to: '/improvisation', label: 'Improvisation', icon: LuWandSparkles, description: 'Guided improvisation challenges' },
     { to: '/jam', label: 'Jam Room', icon: LuRadio, description: 'Backing tracks with live theory' },
   ] },
