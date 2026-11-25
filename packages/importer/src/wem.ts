@@ -17,6 +17,8 @@
  * WemUnsupportedError that explains how to convert them. Wwise Opus
  * (0x3040/0x3041) is reported the same way.
  */
+import './buffer-polyfill';
+import { convertWwiseRiffToOgg, getPackedCodebooks } from 'ww2ogg-ts';
 import { ascii } from './bytes';
 
 export interface WemInfo {
@@ -35,8 +37,8 @@ export interface WemInfo {
 
 export interface WemResult {
   bytes: Uint8Array;
-  container: 'wav';
-  mime: 'audio/wav';
+  container: 'wav' | 'ogg';
+  mime: 'audio/wav' | 'audio/ogg';
   codec: string;
   info: WemInfo;
 }
@@ -199,10 +201,18 @@ export function convertWem(data: Uint8Array): WemResult {
   }
 
   if (info.tag === 0xffff) {
-    throw new WemUnsupportedError(
-      `Wwise Vorbis audio (${info.channels} ch, ${info.sampleRate} Hz). This codec leaves out the Vorbis codebooks, so the browser cannot rebuild the stream without the external codebook table Wwise encodes against (aoTuV 6.03), which this app does not include. ${WEM_CONVERT_HELP}`,
-      info.codec,
-    );
+    let ogg: Uint8Array;
+    try {
+      ({ ogg } = convertWwiseRiffToOgg(data, { codebooks: getPackedCodebooks('aoTuV_603') }));
+    } catch {
+      try {
+        ({ ogg } = convertWwiseRiffToOgg(data, { codebooks: getPackedCodebooks('standard') }));
+      } catch (e) {
+        throw new WemUnsupportedError(`Wwise Vorbis decode failed: ${(e as Error).message}`, info.codec);
+      }
+    }
+    const bytes = ogg instanceof Uint8Array ? ogg : new Uint8Array(ogg);
+    return { bytes, container: 'ogg', mime: 'audio/ogg', codec: info.codec, info };
   }
   throw new WemUnsupportedError(`${info.codec} audio cannot be decoded in the browser. ${WEM_CONVERT_HELP}`, info.codec);
 }

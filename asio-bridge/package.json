@@ -1,0 +1,14 @@
+{
+  "name": "gma-asio-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Local ultra-low-latency ASIO / WASAPI WebSocket audio bridge for Guitar Mastery Academy.",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "audify": "^1.10.2",
+    "ws": "^8.18.0"
+  }
+}

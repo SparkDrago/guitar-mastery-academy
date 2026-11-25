@@ -5,6 +5,8 @@
  * Microphone audio is processed on the device and never uploaded.
  */
 import { scheduleUntil, type ClickEvent, type MetronomeConfig, type ArrEvent, beatsToSeconds } from '@gma/audio';
+import { sendMidiNote, shouldMuteSynth } from './midi';
+import { AsioBridgeClient, getAudioInputSettings } from './asio';
 
 let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
@@ -66,6 +68,7 @@ export type Tone = 'clean' | 'crunch' | 'distorted' | 'pad';
 /** Plucked-string voice: detuned saws through an enveloped low-pass, optional drive. */
 export function pluck(midi: number, time: number, dur: number, vel = 0.7, tone: Tone = 'clean', dest?: AudioNode) {
   const c = getContext();
+  if (sendMidiNote(midi, time, c.currentTime, dur, vel) && shouldMuteSynth()) return;
   const f = midiFreq(midi);
   const g = c.createGain();
   const filter = c.createBiquadFilter();
@@ -379,45 +382,101 @@ export function micErrorMessage(e: MicError): string {
 export class MicInput {
   stream: MediaStream | null = null;
   source: MediaStreamAudioSourceNode | null = null;
+  outputNode: AudioNode | null = null;
   analyser: AnalyserNode | null = null;
   private buf: Float32Array<ArrayBuffer> | null = null;
+  private asio: AsioBridgeClient | null = null;
+  private gainNode: GainNode | null = null;
+  private splitter: ChannelSplitterNode | null = null;
 
   async start(fftSize = 4096): Promise<{ ok: true } | { ok: false; error: MicError }> {
+    const cfg = getAudioInputSettings();
+
+    // 1. Native ASIO via local WebSocket bridge.
+    if (cfg.mode === 'asio') {
+      const client = new AsioBridgeClient(fftSize, cfg.gain);
+      const r = await client.start(cfg);
+      if (!r.ok) return { ok: false, error: 'not-found' };
+      this.asio = client;
+      return { ok: true };
+    }
+
+    // 2. Standard browser audio interface / microphone via getUserMedia.
     if (!window.isSecureContext) return { ok: false, error: 'insecure' };
     if (!navigator.mediaDevices?.getUserMedia) return { ok: false, error: 'unsupported' };
+    const constraints: MediaTrackConstraints = {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+      ...(cfg.browserDeviceId ? { deviceId: { exact: cfg.browserDeviceId } } : {}),
+      ...(cfg.browserChannel !== 'mix' ? { channelCount: { ideal: 2 } } : {}),
+    };
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+      this.stream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
     } catch (e) {
       const name = (e as { name?: string }).name;
       return { ok: false, error: name === 'NotAllowedError' || name === 'SecurityError' ? 'denied' : name === 'NotFoundError' || name === 'OverconstrainedError' ? 'not-found' : name === 'NotReadableError' ? 'busy' : 'unknown' };
     }
     const c = getContext();
     this.source = c.createMediaStreamSource(this.stream);
+    let node: AudioNode = this.source;
+    if (cfg.browserChannel === 0 || cfg.browserChannel === 1) {
+      this.splitter = c.createChannelSplitter(2);
+      this.gainNode = c.createGain();
+      this.gainNode.gain.value = cfg.gain;
+      this.source.connect(this.splitter);
+      this.splitter.connect(this.gainNode, cfg.browserChannel, 0);
+      node = this.gainNode;
+    } else if (cfg.gain !== 1) {
+      this.gainNode = c.createGain();
+      this.gainNode.gain.value = cfg.gain;
+      this.source.connect(this.gainNode);
+      node = this.gainNode;
+    }
+    this.outputNode = node;
     this.analyser = c.createAnalyser();
     this.analyser.fftSize = fftSize;
     this.analyser.smoothingTimeConstant = 0;
-    this.source.connect(this.analyser);
+    node.connect(this.analyser);
     this.buf = new Float32Array(new ArrayBuffer(fftSize * 4));
     return { ok: true };
   }
 
+  /** Subscribe to raw PCM chunks when running through the ASIO bridge. */
+  setAsioFrameHandler(fn: ((chunk: Float32Array) => void) | null) {
+    if (this.asio) this.asio.onFrame = fn;
+  }
+
+  get isAsio(): boolean {
+    return this.asio !== null;
+  }
+
   /** Latest time-domain frame (shared buffer; copy if you keep it). */
   read(): Float32Array | null {
+    if (this.asio) return this.asio.read();
     if (!this.analyser || !this.buf) return null;
     this.analyser.getFloatTimeDomainData(this.buf);
     return this.buf;
   }
 
   get sampleRate(): number {
+    if (this.asio) return this.asio.sampleRate;
     return ctx?.sampleRate ?? 48000;
   }
 
   stop() {
+    this.asio?.stop();
+    this.asio = null;
     this.source?.disconnect();
+    this.splitter?.disconnect();
+    this.gainNode?.disconnect();
     this.analyser?.disconnect();
     this.stream?.getTracks().forEach((t) => t.stop());
     this.stream = null;
     this.source = null;
+    this.outputNode = null;
+    this.splitter = null;
+    this.gainNode = null;
     this.analyser = null;
   }
 }
@@ -452,17 +511,23 @@ export class Recorder {
     if (!r.ok) return r;
     const c = getContext();
     this.chunks = [];
+    if (this.mic.isAsio) {
+      this.mic.setAsioFrameHandler((chunk) => this.chunks.push(new Float32Array(chunk)));
+      this.startTime = c.currentTime;
+      return { ok: true };
+    }
+    const feed = this.mic.outputNode ?? this.mic.source!;
     try {
       const url = URL.createObjectURL(new Blob([WORKLET], { type: 'text/javascript' }));
       await c.audioWorklet.addModule(url);
       const node = new AudioWorkletNode(c, 'gma-recorder');
       node.port.onmessage = (e) => this.chunks.push(e.data as Float32Array);
-      this.mic.source!.connect(node);
+      feed.connect(node);
       this.node = node;
     } catch {
       const sp = c.createScriptProcessor(2048, 1, 1);
       sp.onaudioprocess = (e) => this.chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
-      this.mic.source!.connect(sp);
+      feed.connect(sp);
       sp.connect(c.destination);
       this.node = sp;
     }
