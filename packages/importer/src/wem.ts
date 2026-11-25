@@ -3,6 +3,7 @@
  * if the WEM wraps raw PCM). Runs purely in JS/TS so it works inside the
  * import Web Worker and Node unit tests.
  */
+import './buffer-polyfill';
 import { convertWwiseRiffToOgg, getPackedCodebooks } from 'ww2ogg-ts';
 import { ascii } from './bytes';
 
