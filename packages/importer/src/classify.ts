@@ -10,7 +10,7 @@ export type FileRole =
   | 'psarc' | 'zip'
   | 'arrangement-xml' | 'vocals-xml' | 'showlights-xml' | 'other-xml'
   | 'rs-manifest' | 'rs-hsan' | 'gma-song' | 'json'
-  | 'guitar-pro' | 'guitar-pro-legacy'
+  | 'guitar-pro' | 'guitar-pro-4' | 'guitar-pro-legacy'
   | 'audio' | 'wwise-audio' | 'wwise-bank'
   | 'sng' | 'image' | 'game-data' | 'unknown';
 
@@ -32,12 +32,12 @@ export const isPreviewAudio = (name: string) => PREVIEW.test(baseName(name).toLo
 
 function xmlRoot(head: Uint8Array): string | null {
   let text = new TextDecoder('utf-8', { fatal: false }).decode(head);
-  text = text.replace(/^﻿/, '').replace(/<\?[\s\S]*?\?>/g, '').replace(/<!--[\s\S]*?-->/g, '').replace(/<!DOCTYPE[^>]*>/gi, '');
+  text = text.replace(/^\ufeff/, '').replace(/<\?[\s\S]*?\?>/g, '').replace(/<!--[\s\S]*?-->/g, '').replace(/<!DOCTYPE[^>]*>/gi, '');
   const m = /^\s*<\s*([A-Za-z_][\w.:-]*)/.exec(text);
   return m ? m[1] : null;
 }
 
-const looksXml = (head: Uint8Array) => { const t = ascii(head, 0, 64).replace(/^﻿|^\xEF\xBB\xBF/, '').trimStart(); return t.startsWith('<'); };
+const looksXml = (head: Uint8Array) => { const t = ascii(head, 0, 64).replace(/^\ufeff|^\xEF\xBB\xBF/, '').trimStart(); return t.startsWith('<'); };
 const looksJson = (head: Uint8Array) => { const t = ascii(head, 0, 64).replace(/^\xEF\xBB\xBF/, '').trimStart(); return t.startsWith('{') || t.startsWith('['); };
 
 /** RIFF/WAVE: PCM/float WAV plays in browsers; Wwise (.wem) uses its own codec tags. */
@@ -90,7 +90,10 @@ export function classify(name: string, head: Uint8Array): Classification {
   if (head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3 && ext === 'webm') return { role: 'audio', kind: 'WebM audio', audio: { container: 'webm', mime: 'audio/webm', preview: PREVIEW.test(base) } };
   if (magic === 'DDS ' || /^(dds|png|jpe?g|webp)$/.test(ext)) return { role: 'image', kind: ext === 'dds' || magic === 'DDS ' ? 'DirectDraw texture (.dds)' : 'Image' };
   if (ext === 'sng') return { role: 'sng', kind: 'Rocksmith binary chart (.sng)' };
-  if (/^(gp3|gp4|gp5|gpx)$/.test(ext)) return { role: 'guitar-pro-legacy', kind: `Guitar Pro (.${ext})` };
+  if (ext === 'gp4' || ascii(head, 1, 25).startsWith('FICHIER GUITAR PRO v4.')) {
+    return { role: 'guitar-pro-4', kind: 'Guitar Pro 4 file (.gp4)' };
+  }
+  if (/^(gp3|gp5|gpx)$/.test(ext)) return { role: 'guitar-pro-legacy', kind: `Guitar Pro (.${ext})` };
 
   if (looksXml(head) || ext === 'xml') {
     const root = xmlRoot(head);
@@ -116,7 +119,7 @@ export function classify(name: string, head: Uint8Array): Classification {
 export function roleSummary(role: FileRole): { status: 'import' | 'metadata' | 'unsupported' | 'not-used' | 'archive'; detail: string } {
   switch (role) {
     case 'psarc': case 'zip': return { status: 'archive', detail: 'Archive: its contents are inspected.' };
-    case 'arrangement-xml': case 'gma-song': case 'guitar-pro': return { status: 'import', detail: 'Chart for Play mode.' };
+    case 'arrangement-xml': case 'gma-song': case 'guitar-pro': case 'guitar-pro-4': return { status: 'import', detail: 'Chart for Play mode.' };
     case 'audio': return { status: 'import', detail: 'Playable audio.' };
     case 'rs-manifest': case 'rs-hsan': return { status: 'metadata', detail: 'Song details (title, artist, album, arrangement).' };
     case 'vocals-xml': return { status: 'not-used', detail: 'Lyrics: Play mode does not show lyrics yet.' };
@@ -124,7 +127,7 @@ export function roleSummary(role: FileRole): { status: 'import' | 'metadata' | '
     case 'wwise-audio': return { status: 'import', detail: 'Wwise audio (.wem): Wwise Vorbis is converted to OGG, and PCM/ADPCM to WAV in the browser.' };
     case 'wwise-bank': return { status: 'unsupported', detail: 'Wwise sound bank (playback events for the game’s audio engine). Browsers cannot use it.' };
     case 'sng': return { status: 'import', detail: 'Rocksmith 2014 binary chart (.sng): decrypted and parsed in the browser.' };
-    case 'guitar-pro-legacy': return { status: 'unsupported', detail: 'Older Guitar Pro format; save it as .gp (Guitar Pro 7/8) to import.' };
+    case 'guitar-pro-legacy': return { status: 'unsupported', detail: 'Older Guitar Pro format; save it as .gp (Guitar Pro 7/8) or .gp4 to import.' };
     case 'image': return { status: 'not-used', detail: 'Artwork or texture: not used by Play mode.' };
     case 'game-data': return { status: 'not-used', detail: 'Game engine data: not needed by Play mode.' };
     case 'other-xml': case 'json': return { status: 'not-used', detail: 'Not a chart or song description this app understands.' };

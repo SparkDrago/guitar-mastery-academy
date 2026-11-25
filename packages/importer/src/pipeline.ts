@@ -13,6 +13,7 @@ import { blobFingerprint, ImportAborted, readExact, sha256Hex, throwIfAborted, t
 import { classify, isPreviewAudio, roleSummary, SNIFF_BYTES, type Classification } from './classify';
 import { convertWem, WemUnsupportedError } from './wem';
 import { songFromRocksmithSng } from './sng';
+import { parseGp4 } from './gp4';
 import { groupSongs, type ArrangementItem, type AudioItem, type MetaHint, type SongDraft } from './grouping';
 import { guessFromFileName, keyFromPath, metaFromArrangementXml, metaFromManifest } from './metadata';
 import { checkArchivePath } from './paths';
@@ -201,7 +202,7 @@ async function importArchive(
     let ecls = classify(e.path, new Uint8Array(0));
     const cache: { bytes: Uint8Array | null } = { bytes: null };
     const getBytes = async () => (cache.bytes ??= await e.read(o.signal));
-    const wanted = (r: string) => ['arrangement-xml', 'sng', 'rs-manifest', 'rs-hsan', 'gma-song', 'json', 'other-xml', 'audio', 'wwise-audio', 'guitar-pro', 'unknown'].includes(r);
+    const wanted = (r: string) => ['arrangement-xml', 'sng', 'rs-manifest', 'rs-hsan', 'gma-song', 'json', 'other-xml', 'audio', 'wwise-audio', 'guitar-pro', 'guitar-pro-4', 'unknown'].includes(r);
     try {
       if (wanted(ecls.role) && !(ecls.role === 'unknown' && e.size > 1024 * 1024)) {
         const b = await getBytes();
@@ -334,6 +335,34 @@ async function handleItem(it: Item, cls: Classification, c: Collect, signal?: Ab
         if (!r.song) { failed.push(`${t.name} (${r.errors.join(' ') || 'no notes'})`); continue; }
         const song = { ...r.song, arrangement: t.name || r.song.arrangement };
         c.arrangements.push({ key: `a${c.seq}`, song, path: `${it.path}#${t.name}`, origin: it.origin, scope, hash: `${hash}:${t.index}`, meta: { title: song.title, artist: song.artist, songKey: `gp-${hash.slice(0, 12)}` }, warnings: r.warnings });
+        made.push(t.name);
+      }
+      if (!made.length) return { status: 'error', detail: `No playable tracks${failed.length ? `: ${failed.join('; ')}` : ''}.` };
+      return { status: 'imported', detail: `${made.length} track(s): ${made.join(', ')}${failed.length ? `. Skipped: ${failed.join('; ')}` : ''}.` };
+    }
+    case 'guitar-pro-4': {
+      const bytes = await it.bytes();
+      const hash = await sha256Hex(bytes);
+      const dupOf = c.hashes.get(hash);
+      if (dupOf) return { status: 'duplicate', detail: `Identical to ${dupOf}; imported once.` };
+      const parsed = parseGp4(bytes, it.path, `arr-${++c.seq}`);
+      c.hashes.set(hash, it.path);
+      const made: string[] = [];
+      const failed: string[] = [...parsed.skipped];
+      const scope = it.scope || `gp4:${it.path}`;
+      for (const t of parsed.tracks) {
+        const errs = validateSong(t.song);
+        if (errs.length) { failed.push(`${t.name} (${errs.join(' ')})`); continue; }
+        c.arrangements.push({
+          key: `a${++c.seq}`,
+          song: { ...t.song, id: `arr-${c.seq}` },
+          path: `${it.path}#${t.name}`,
+          origin: it.origin,
+          scope,
+          hash: `${hash}:${t.name}`,
+          meta: { title: parsed.title, artist: parsed.artist, album: parsed.album, songKey: `gp4-${hash.slice(0, 12)}` },
+          warnings: t.warnings,
+        });
         made.push(t.name);
       }
       if (!made.length) return { status: 'error', detail: `No playable tracks${failed.length ? `: ${failed.join('; ')}` : ''}.` };
