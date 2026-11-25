@@ -26,7 +26,7 @@ export interface OpenedArchive {
   components: ComponentReport[];
   facts: Fact[];
   entries: ArchiveEntry[];
-  /** False when nothing inside can be listed (e.g. encrypted table of contents). */
+  /** False when nothing inside can be listed (e.g. a failed TOC decryption). */
   listable: boolean;
 }
 
@@ -55,7 +55,7 @@ export const psarcHandler: ArchiveHandler = {
         format: `PSARC ${a.header.version}`,
         components: a.components,
         facts: a.facts,
-        listable: !a.encrypted && a.files.length > 0,
+        listable: a.files.length > 0,
         entries: a.files.map((f) => ({
           path: f.path,
           label: f.path ?? `entry #${f.index}`,

@@ -117,13 +117,13 @@ test('importing a Rocksmith-layout package: one song, both arrangements, audio a
   });
 });
 
-test('importing an encrypted package explains which component blocks it', async () => {
+test('importing an encrypted package lists entries after TOC decryption', async () => {
   const r = await runImport([input('Scorpions_-_Send_me_an_Angel_p.psarc', songPackage({ encryptedToc: true }))]);
-  assert.equal(r.songs.length, 0);
+  assert.equal(r.songs.length, 1);
   const f = r.files[0];
-  assert.equal(f.status, 'unsupported');
-  assert.match(f.detail, /Blocked by: table of contents/);
-  assert.ok(f.facts?.some((x) => x.label === 'Name suggests' && x.value === 'Scorpions — Send me an Angel'));
+  assert.notEqual(f.status, 'unsupported');
+  assert.equal(f.entries?.length, 11);
+  assert.ok(f.entries?.some((e) => e.path.endsWith('demoriff_lead.xml') && e.status === 'imported'));
 });
 
 test('damaged archive header is attributed to the header component', async () => {
