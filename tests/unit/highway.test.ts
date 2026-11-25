@@ -58,7 +58,9 @@ test('every note of a chord, open strings included, is drawn inside its chord fr
     assert.equal(r.frames.length, 1);
     const f = r.frames[0];
     const labels = r.texts.filter((x) => /^\d+$/.test(x.text) && x.y < H * 0.9); // fret labels, not the fret-number ruler
-    assert.equal(labels.length, frets.filter((x) => x !== null).length, `one label per note (${frets})`);
+    // Close to the strings every note is labelled; further out a label that would collide is left out.
+    if (t >= 1.5) assert.equal(labels.length, frets.filter((x) => x !== null).length, `one label per note (${frets})`);
+    else assert.ok(labels.length >= 2, 'far chord still labelled where labels fit');
     for (const l of labels) assert.ok(inside(l, f), `"${l.text}" at (${l.x.toFixed(0)},${l.y.toFixed(0)}) lies in frame ${JSON.stringify(f)} (t=${t})`);
     const open = r.boxes.filter((b) => b.fill === STRING_COLORS[2]);
     if (frets[2] === 0) for (const b of open) assert.ok(b.x >= f.x - 1 && b.x + b.w <= f.x + f.w + 1, 'open-string bar stays within the chord frame');

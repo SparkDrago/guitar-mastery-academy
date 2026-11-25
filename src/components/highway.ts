@@ -26,6 +26,8 @@ export interface HighwayState {
 }
 
 const PERSPECTIVE = 3.2;
+/** Extra fall-off of string height with distance (0 = plain perspective). */
+const HEIGHT_FALLOFF = 0.8;
 
 export function drawHighway(g: CanvasRenderingContext2D, W: number, H: number, st: HighwayState) {
   const { song, t, lookahead, cam } = st;
@@ -41,7 +43,15 @@ export function drawHighway(g: CanvasRenderingContext2D, W: number, H: number, s
   const rowY = (s: number) => rowTop + (rowOf(s) * (rowBottom - rowTop)) / Math.max(1, n - 1);
   const fx0 = (f: number) => { const x = m + ((f - cam.lo) / span) * (W - 2 * m); return st.leftHanded ? W - x : x; };
   const scale = (z: number) => 1 / (1 + PERSPECTIVE * Math.max(0, z));
-  const P = (x: number, y: number, z: number) => { const s = scale(z); return [cx + (x - cx) * s, horizonY + (y - horizonY) * s] as const; };
+  // Height above the board's floor shrinks faster with distance than the floor itself
+  // (as if seen from above), so a far chord becomes a compact stack and notes that are
+  // close in time no longer blend into each other's rows. At the strings (z = 0) nothing changes.
+  const floorY = rowBottom + 10;
+  const lift = (z: number) => { const s = scale(z); return s * Math.pow(s, HEIGHT_FALLOFF); };
+  const P = (x: number, y: number, z: number) => {
+    const s = scale(z);
+    return [cx + (x - cx) * s, horizonY + (floorY - horizonY) * s - (floorY - y) * lift(z)] as const;
+  };
   const zOf = (time: number) => (time - t) / lookahead;
   const label = labelWith(g);
 
@@ -218,8 +228,9 @@ export function drawHighway(g: CanvasRenderingContext2D, W: number, H: number, s
     const x1 = note.slideTo !== undefined ? laneX(note.slideTo) : note.techniques.includes('slideOut') ? x0 + (fx0(Math.max(0, note.fret - 3)) - fx0(note.fret)) : x0;
     const vib = note.techniques.includes('vibrato'), trem = note.techniques.includes('tremolo');
     const steps = 40;
-    const width = fw * (vib || trem ? 0.1 : 0.22); // wavy tails thinner so the wave reads as a line
-    g.strokeStyle = color + '88';
+    // About half the gem's height (wavy tails thinner so the wave reads as a line).
+    const width = Math.min(H * 0.05, rowGap * 0.86) * (vib || trem ? 0.4 : 0.6);
+    g.strokeStyle = color + '77';
     g.lineCap = 'round';
     let prev: readonly [number, number] | null = null;
     for (let k = 0; k <= steps; k++) {
@@ -271,7 +282,7 @@ export function drawHighway(g: CanvasRenderingContext2D, W: number, H: number, s
       const fw = Math.abs(fx0(note.fret) - fx0(note.fret - 1));
       const w = Math.min(fw * 0.72, W * 0.09) * s;
       // Never taller than the gap between string rows at this depth, so far chords do not overlap.
-      const h = Math.max(3, Math.min(H * 0.05, rowGap * 0.86) * s);
+      const h = Math.max(3, Math.min(H * 0.05 * s, rowGap * 0.86 * lift(zz)));
       const [px, py] = P(x, y, zz);
       if (flash !== undefined && t - flash < 0.25) { g.shadowColor = '#29b878'; g.shadowBlur = 24; }
       if (tech.includes('harmonic') || tech.includes('artificialHarmonic')) {

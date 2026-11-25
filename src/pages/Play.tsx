@@ -21,6 +21,7 @@ import { store } from '@/lib/store';
 import { cx, nowIso, uid } from '@/lib/core';
 import { MicInput, click, getContext, micErrorMessage, pluck, type MicError } from '@/lib/audio';
 import { library, type LibraryArrangement, type LibrarySong } from '@/lib/idb';
+import { chordNameReport, withChordNames, type ChordNameMode } from '@/lib/chordNames';
 import { navigate, useDocumentTitle, useLocation } from '@/lib/router';
 import { Badge, Button, Callout, Card, Empty, Field, Modal, PageHeader, Segmented, Select, Stepper, Toggle } from '@/components/ui';
 import { HBars } from '@/components/charts';
@@ -38,6 +39,8 @@ interface PlayOptions {
   guide: boolean;
   clickTrack: boolean;
   lowOnTop: boolean;
+  /** Chord names as the chart has them, or worked out from the notes played. */
+  chordNames: ChordNameMode;
 }
 
 const PREF_KEY = 'gma.play.prefs';
@@ -135,7 +138,7 @@ const bestOf = (lib: LibrarySong) => { const b = lib.arrangements.map((a) => a.b
 // ── Setup ────────────────────────────────────────────────────────────────
 
 function SetupPanel({ source, onSelect, onStart, onChanged }: { source: Source | null; onSelect: (a: LibraryArrangement) => void; onStart: (p: { song: PlaySong; audio: Blob | null; offset: number; opts: PlayOptions; source: Source; bpm: number }) => void; onChanged: () => Promise<unknown> }) {
-  const [opts, setOpts] = useState<PlayOptions>(() => readJson(PREF_KEY, { speed: 1, fromSection: 0, toSection: 0, loop: false, useMic: true, anyOctave: false, guide: true, clickTrack: true, lowOnTop: true }));
+  const [opts, setOpts] = useState<PlayOptions>(() => readJson(PREF_KEY, { speed: 1, fromSection: 0, toSection: 0, loop: false, useMic: true, anyOctave: false, guide: true, clickTrack: true, lowOnTop: true, chordNames: 'chart' }));
   const [bpm, setBpm] = useState(80);
   const [audio, setAudio] = useState<Blob | null>(null);
   const [offset, setOffset] = useState(0);
@@ -155,6 +158,8 @@ function SetupPanel({ source, onSelect, onStart, onChanged }: { source: Source |
     return songFromTabScore(source.ex.score, { id: source.ex.id, bpm, repeats: 2, arrangement: 'Exercise', source: 'exercise', chordName: chordNamer });
   }, [source, bpm]);
   useEffect(() => { if (song) setOpts((o) => ({ ...o, fromSection: 0, toSection: Math.max(0, song.sections.length - 1) })); }, [song?.id, song?.sections.length]);
+
+  const nameReport = useMemo(() => (song && source?.kind === 'imported' ? chordNameReport(song) : { shapes: 0, differing: [] }), [song, source?.kind]);
 
   if (!source || !song) return <Card title="Get ready"><p className="text-sm text-ink-300">Pick a song or exercise to see its details and start playing.</p></Card>;
 
@@ -246,8 +251,16 @@ function SetupPanel({ source, onSelect, onStart, onChanged }: { source: Source |
           {!audio && <Toggle checked={opts.clickTrack} onChange={(v) => set({ clickTrack: v })} label="Click on every beat" />}
           <Toggle checked={opts.lowOnTop} onChange={(v) => set({ lowOnTop: v })} label="Low string on top (off = tab order)" />
         </div>
+        {source.kind === 'imported' && nameReport.shapes > 0 && (
+          <Field label="Chord names" hint={nameReport.differing.length
+            ? `${nameReport.differing.length} of the chart's ${nameReport.shapes} chord shapes are named differently from what their notes spell, e.g. ${nameReport.differing.slice(0, 2).map((d) => `${d.chart} (${d.frets}) = ${d.notes}`).join(', ')}.`
+            : `All ${nameReport.shapes} chord names in the chart match their notes.`}>
+            <Segmented size="sm" value={opts.chordNames} onChange={(v) => set({ chordNames: v as ChordNameMode })} aria-label="Chord names"
+              options={[{ value: 'chart', label: 'From the chart' }, { value: 'notes', label: 'From the notes' }]} data-testid="play-chord-names" />
+          </Field>
+        )}
         <div className="flex flex-wrap gap-2 pt-1">
-          <Button variant="primary" size="lg" onClick={() => onStart({ song, audio, offset, opts, source, bpm })} data-testid="play-start"><LuPlay size={18} /> Play</Button>
+          <Button variant="primary" size="lg" onClick={() => onStart({ song: withChordNames(song, opts.chordNames), audio, offset, opts, source, bpm })} data-testid="play-start"><LuPlay size={18} /> Play</Button>
           {source.kind === 'imported' && <Button variant="ghost" onClick={() => void remove()} aria-label="Remove song"><LuTrash2 size={16} /></Button>}
         </div>
         <p className="text-xs text-ink-400">Tip: plug in or play close to the microphone, and use headphones when a recording is playing so the app hears your guitar, not the speakers.</p>

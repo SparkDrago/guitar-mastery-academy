@@ -148,5 +148,8 @@ test('highway draws each technique', () => {
   // Bend: the tail rises as the bend goes up.
   const bend = draw(only(4), 4).strokes.filter((p) => p.length === 2);
   const straight = draw({ ...only(4), events: [{ ...note(4), kind: 'note', techniques: [], bend: undefined, bendCurve: undefined }] }, 4).strokes.filter((p) => p.length === 2);
-  assert.ok(bend[bend.length - 1][1][1] < straight[straight.length - 1][1][1] - 5, 'bent tail sits above an unbent one');
+  assert.ok(bend[bend.length - 1][1][1] < straight[straight.length - 1][1][1] - 2, 'bent tail sits above an unbent one');
+  const lifts = bend.map((b, i) => straight[i][1][1] - b[1][1]);
+  assert.ok(Math.max(...lifts) > 5, 'clearly lifted once the bend reaches full');
+  assert.ok(lifts[0] < 0.5, 'starts unbent');
 });
