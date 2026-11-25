@@ -91,3 +91,18 @@ All instruments are synthesised (no samples to license or download).
 ## Build
 
 `scripts/build.mjs` bundles `src/main.tsx` with esbuild (ES2022, minified, hashed filenames), compiles Tailwind through its `compile()` API (scanning `src/` for class names), writes `dist/index.html`, and embeds the public configuration (`__GMA_CONFIG__`). It refuses to embed a key that looks like a Supabase service-role key.
+
+## Chord tools (`@gma/theory`)
+
+Two views of one chord catalog (`CHORDS` in `chords.ts`):
+
+| API | Input | Used by |
+|---|---|---|
+| `CHORD_FORMULAS` | semitone intervals, optional tones, lookup priority (derived from `CHORDS`) | everything below |
+| `findVoicings(chord, tuning, opts)` | a `BuiltChord` | Chord Explorer |
+| `generateVoicings(rootPc, formula, { tuning, bassPc, filter, maxFret, maxSpan, limit })` | root + formula; filter `all` / `open` / `barre` / `shell` / `triad`; slash bass | Chord Finder → Find voicings |
+| `reverseChordLookup(pcs, { bassPc, allowRootless })` | pitch classes (shape, typed notes or listening) | Chord Finder → Identify, Play mode, Jam |
+| `reverseLookupFrets(frets, tuning)` | fret per string | names like `Am9 (no 5)`, `D/F#`; all enharmonic readings |
+| `buildFullNeckArpeggio`, `buildArpeggioPositions` | root + formula | Chord Finder → Arpeggios: five CAGED positions (standard-interval six-string tunings) or root-anchored windows, each with a string-by-string sweep path |
+
+`generateVoicings` slides a hand-sized fret window up the neck, tries chord tones and mutes per string, and keeps shapes with every required tone, the requested bass as the lowest *pitch*, at most one muted inner string and a valid fingering (`assignFingers`, which also detects barres). Results are spread over the neck (at most three per position first), best first.

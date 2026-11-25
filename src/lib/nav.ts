@@ -24,7 +24,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
     { to: '/fretboard', label: 'Fretboard', icon: LuGuitar, description: 'Interactive 6/7/8-string fretboard' },
     { to: '/scales', label: 'Scales', icon: LuLayers, description: 'Scale explorer and Pillitiere pattern builder' },
     { to: '/chords', label: 'Chords', icon: LuGrid3X3, description: 'Chord library and voicings' },
-    { to: '/chord-finder', label: 'Chord Finder', icon: LuScanSearch, description: 'Reverse chord lookup from a shape, notes or by ear' },
+    { to: '/chord-finder', label: 'Chord Finder', icon: LuScanSearch, description: 'Voicings for any chord, reverse lookup and arpeggios' },
   ] },
   { group: 'Practice', items: [
     { to: '/practice', label: 'Practice Studio', icon: LuCalendar, description: 'Personalised daily routines' },

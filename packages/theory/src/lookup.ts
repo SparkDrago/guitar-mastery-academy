@@ -2,7 +2,7 @@
  * Reverse chord lookup: name the chord(s) formed by a set of notes, from a
  * fretboard shape, a list of note names or pitch classes detected by ear.
  */
-import { CHORDS, chordSymbol, type ChordDef } from './chords';
+import { CHORDS, CHORD_FORMULAS, STANDARD_TUNING_MIDI, chordSymbol, intervalLabel, mod12, pitchClassToName, type ChordDef, type ChordFormula } from './chords';
 import { parseFormula } from './intervals';
 import { FLAT_NAMES, SHARP_NAMES, mod } from './pitch';
 import { midiAt } from './fretboard';
@@ -78,4 +78,67 @@ export function shapePitches(tuning: Tuning, frets: (number | null)[]): { midis:
   const midis = frets.map((f, s) => (f === null || f === undefined ? null : midiAt(tuning, s, f))).filter((m): m is number => m !== null);
   if (!midis.length) return { midis: [], pcs: [] };
   return { midis, pcs: [...new Set(midis.map((m) => mod(m, 12)))], bassPc: mod(Math.min(...midis), 12) };
+}
+
+// ── Reverse lookup from fret positions (semitone formulas) ───────────────
+
+export interface ReverseChordMatch {
+  /** e.g. "Cmaj7", "D/F#", "Am9 (no 5)". */
+  name: string;
+  rootPc: number;
+  bassPc: number;
+  formula: ChordFormula;
+  isInversion: boolean;
+  matchedIntervals: string[];
+  omittedIntervals: string[];
+  /** Always empty: a name must explain every note played. Kept for callers that show it. */
+  extraIntervals: string[];
+  score: number;
+}
+
+const ivLabel = (iv: number) => intervalLabel(iv, iv >= 12);
+
+/**
+ * Name the chord a set of fret positions makes. `frets` has one entry per string,
+ * lowest first (null = muted). Every played note must be a chord tone; optional
+ * tones may be missing (reported as "(no 5)"). All enharmonic readings are
+ * returned (C6 and Am7/C both appear), best first.
+ */
+export function reverseLookupFrets(
+  frets: (number | null)[],
+  tuning: number[] | Tuning = STANDARD_TUNING_MIDI,
+  preferFlat = false,
+  limit = 8,
+): ReverseChordMatch[] {
+  const strings = Array.isArray(tuning) ? tuning : tuning.strings;
+  const midi = frets.flatMap((f, i) => (f !== null && f >= 0 && i < strings.length ? [strings[i] + f] : [])).sort((a, b) => a - b);
+  if (midi.length < 2) return [];
+  const bassPc = mod12(midi[0]);
+  const played = new Set(midi.map(mod12));
+  if (played.size < 2) return [];
+  const out = new Map<string, ReverseChordMatch>();
+  for (const rootPc of played) {
+    const playedIvs = new Set([...played].map((pc) => mod12(pc - rootPc)));
+    for (const formula of CHORD_FORMULAS) {
+      const byPc = new Map(formula.intervals.map((iv) => [mod12(iv), iv]));
+      const optional = new Set((formula.optional ?? []).map(mod12));
+      if ([...playedIvs].some((iv) => !byPc.has(iv))) continue; // unexplained note
+      const matched = [...byPc.keys()].filter((pc) => playedIvs.has(pc));
+      const omitted = [...byPc.keys()].filter((pc) => !playedIvs.has(pc));
+      if (omitted.some((pc) => !optional.has(pc))) continue; // a required tone is missing
+      const isInversion = bassPc !== rootPc;
+      let name = pitchClassToName(rootPc, preferFlat) + formula.symbol + (isInversion ? `/${pitchClassToName(bassPc, preferFlat)}` : '');
+      if (omitted.length) name += ` (no ${omitted.map((pc) => ivLabel(byPc.get(pc)!)).join(', ')})`;
+      const score = formula.priority + (isInversion ? 0 : 25) - omitted.length * 14 + matched.length * 5;
+      const prev = out.get(name);
+      if (prev && prev.score >= score) continue;
+      out.set(name, {
+        name, rootPc, bassPc, formula, isInversion, score,
+        matchedIntervals: matched.map((pc) => ivLabel(byPc.get(pc)!)),
+        omittedIntervals: omitted.map((pc) => ivLabel(byPc.get(pc)!)),
+        extraIntervals: [],
+      });
+    }
+  }
+  return [...out.values()].sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)).slice(0, limit);
 }

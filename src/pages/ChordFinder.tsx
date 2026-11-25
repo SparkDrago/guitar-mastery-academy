@@ -1,21 +1,232 @@
-/** Reverse chord lookup: name a chord from a fretboard shape, typed notes, or by listening. */
-import { useEffect, useMemo, useRef, useState } from 'react';
+/**
+ * Chord Finder: find voicings for any chord (with slash bass and style filters),
+ * identify a chord from a shape, typed notes or by listening, and show its
+ * arpeggio across the neck in five positions.
+ */
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { LuVolume2, LuMic, LuSquare, LuEraser, LuArrowRight, LuPause, LuPlay } from 'react-icons/lu';
 import { chroma, activePitchClasses } from '@gma/audio';
-import { midiAt, parseNote, pcName, pcOf, reverseChordLookup, shapePitches, type ChordCandidate } from '@gma/theory';
+import {
+  CHORD_FORMULAS, buildArpeggioPositions, buildFullNeckArpeggio, generateVoicings, intervalLabel, midiAt, mod12, parseNote, pcName, pcOf,
+  pitchClassToName, reverseChordLookup, shapePitches, toDiagramVoicing, type ChordCandidate, type ChordFormula, type VoicingFilter,
+} from '@gma/theory';
 import { useActiveTuning, useStudent } from '@/lib/hooks';
 import { store } from '@/lib/store';
 import { cx } from '@/lib/core';
 import { MicInput, getContext, micErrorMessage, pluck, type MicError } from '@/lib/audio';
-import { Link, useDocumentTitle } from '@/lib/router';
-import { Badge, Button, Callout, Card, Field, PageHeader, Segmented, Toggle } from '@/components/ui';
-import { Fretboard, type FretMark } from '@/components/music';
+import { Link, navigate, useDocumentTitle, useLocation } from '@/lib/router';
+import { Badge, Button, Callout, Card, Field, PageHeader, Segmented, Select, Toggle } from '@/components/ui';
+import { ChordDiagram, Fretboard, type FretMark } from '@/components/music';
 import { TuningPicker } from '@/components/widgets';
 
 type Mode = 'fretboard' | 'notes' | 'listen';
+type Tool = 'voicings' | 'identify' | 'arpeggios';
+
+const TOOLS: { value: Tool; label: string }[] = [
+  { value: 'voicings', label: 'Find voicings' },
+  { value: 'identify', label: 'Identify' },
+  { value: 'arpeggios', label: 'Arpeggios' },
+];
 
 export function ChordFinderPage() {
   useDocumentTitle('Chord Finder');
+  const { query } = useLocation();
+  const tool: Tool = TOOLS.some((t) => t.value === query.get('tool')) ? (query.get('tool') as Tool) : 'identify';
+  const s = useStudent();
+  const flats = s.profile.noteNames === 'flats';
+  // Root and chord type are shared by Find voicings and Arpeggios.
+  const [rootPc, setRootPc] = useState(() => { const r = query.get('root'); const n = r ? parseNote(r) : null; return n ? pcOf(n) : 0; });
+  const [formulaId, setFormulaId] = useState(() => (CHORD_FORMULAS.some((f) => f.id === query.get('type')) ? query.get('type')! : 'maj'));
+  const qRoot = query.get('root'), qType = query.get('type');
+  useEffect(() => { const n = qRoot ? parseNote(qRoot) : null; if (n) setRootPc(pcOf(n)); }, [qRoot]);
+  useEffect(() => { if (qType && CHORD_FORMULAS.some((f) => f.id === qType)) setFormulaId(qType); }, [qType]);
+  const formula = CHORD_FORMULAS.find((f) => f.id === formulaId) ?? CHORD_FORMULAS[0];
+  const setTool = (t: Tool) => navigate(`/chord-finder?tool=${t}`);
+  const chordPicker = (
+    <ChordPicker rootPc={rootPc} onRoot={setRootPc} formulaId={formulaId} onFormula={setFormulaId} flats={flats} />
+  );
+  return (
+    <div>
+      <PageHeader eyebrow="Tools" title="Chord Finder" subtitle="Find playable voicings for any chord, name a chord from a shape or by ear, and see its arpeggio across the neck."
+        actions={<Segmented value={tool} onChange={setTool} aria-label="Tool" options={TOOLS} data-testid="finder-tool" />} />
+      {tool === 'identify' && <IdentifyTool />}
+      {tool === 'voicings' && <VoicingsTool rootPc={rootPc} formula={formula} flats={flats} picker={chordPicker} onArpeggio={() => setTool('arpeggios')} />}
+      {tool === 'arpeggios' && <ArpeggioTool rootPc={rootPc} formula={formula} flats={flats} picker={chordPicker} onVoicings={() => setTool('voicings')} />}
+    </div>
+  );
+}
+
+function ChordPicker({ rootPc, onRoot, formulaId, onFormula, flats }: { rootPc: number; onRoot: (pc: number) => void; formulaId: string; onFormula: (id: string) => void; flats: boolean }) {
+  return (
+    <>
+      <Field label="Root"><Select value={String(rootPc)} onChange={(v) => onRoot(Number(v))} className="w-full min-w-0" aria-label="Root" options={[...Array(12).keys()].map((pc) => ({ value: String(pc), label: pitchClassToName(pc, flats) }))} data-testid="finder-root" /></Field>
+      <Field label="Chord"><Select value={formulaId} onChange={onFormula} className="w-full min-w-0" aria-label="Chord type" options={CHORD_FORMULAS.map((f) => ({ value: f.id, label: `${f.symbol || 'maj'} · ${f.name}` }))} data-testid="finder-type" /></Field>
+    </>
+  );
+}
+
+const chordName = (rootPc: number, f: ChordFormula, flats: boolean, bassPc?: number | null) =>
+  `${pitchClassToName(rootPc, flats)}${f.symbol}${bassPc !== null && bassPc !== undefined && mod12(bassPc) !== mod12(rootPc) ? `/${pitchClassToName(bassPc, flats)}` : ''}`;
+
+/** Strum (low to high) or play notes one after another. */
+function playNotes(midis: number[], mode: 'strum' | 'arpeggio', gap = 0.16) {
+  const c = getContext();
+  const t = c.currentTime + 0.03;
+  midis.forEach((m, i) => pluck(m, t + i * (mode === 'strum' ? 0.03 : gap), mode === 'strum' ? 1.8 : 0.7, 0.6));
+}
+
+function ChordFacts({ rootPc, formula, flats }: { rootPc: number; formula: ChordFormula; flats: boolean }) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {formula.intervals.map((iv) => (
+        <Badge key={iv} tone={iv === 0 ? 'accent' : 'neutral'}>
+          {pitchClassToName(rootPc + iv, flats)} <span className="text-ink-400">{intervalLabel(iv, iv >= 12)}{formula.optional?.includes(iv) ? ' (opt.)' : ''}</span>
+        </Badge>
+      ))}
+    </div>
+  );
+}
+
+// ── Find voicings ────────────────────────────────────────────────────────
+
+const FILTERS: { value: VoicingFilter; label: string }[] = [
+  { value: 'all', label: 'All' }, { value: 'open', label: 'Open' }, { value: 'barre', label: 'Barre' },
+  { value: 'shell', label: 'Shell (3–4)' }, { value: 'triad', label: 'Triads' },
+];
+
+function VoicingsTool({ rootPc, formula, flats, picker, onArpeggio }: { rootPc: number; formula: ChordFormula; flats: boolean; picker: ReactNode; onArpeggio: () => void }) {
+  const s = useStudent();
+  const tuning = useActiveTuning();
+  const [bassPc, setBassPc] = useState<number | null>(null);
+  const [filter, setFilter] = useState<VoicingFilter>('all');
+  const [labels, setLabels] = useState<'finger' | 'interval' | 'note'>('finger');
+  const [sel, setSel] = useState(0);
+  const voicings = useMemo(() => generateVoicings(rootPc, formula, { tuning: tuning.strings, bassPc, filter, limit: 24 }), [rootPc, formula, bassPc, filter, tuning.strings]);
+  useEffect(() => setSel(0), [rootPc, formula.id, bassPc, filter, tuning.id]);
+  const active = voicings[sel] ?? voicings[0];
+  const name = chordName(rootPc, formula, flats, bassPc);
+  const marks: FretMark[] = active ? active.frets.flatMap((f, st) => (f === null ? [] : [{
+    string: st, fret: f, tone: (mod12(tuning.strings[st] + f) === mod12(rootPc) ? 'root' : 'chord') as FretMark['tone'],
+    label: toDiagramVoicing(active, rootPc, formula).tokens[st] ?? undefined,
+  }])) : [];
+  return (
+    <div className="grid gap-5 xl:grid-cols-[minmax(0,320px)_minmax(0,1fr)]">
+      <Card title="Chord" className="min-w-0">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-3">
+          {picker}
+          <Field label="Bass note" hint="Pick a note to get slash-chord voicings (e.g. C/E).">
+            <Select value={bassPc === null ? '' : String(bassPc)} onChange={(v) => setBassPc(v === '' ? null : Number(v))} className="w-full min-w-0" aria-label="Bass note"
+              options={[{ value: '', label: 'Root in the bass' }, ...[...Array(12).keys()].map((pc) => ({ value: String(pc), label: `/${pitchClassToName(pc, flats)}` }))]} data-testid="finder-bass" />
+          </Field>
+          <Field label="Tuning"><TuningPicker className="w-full min-w-0" value={tuning.id} onChange={(id) => store.setProfile({ tuningId: id })} /></Field>
+          <div>
+            <div className="text-3xl font-semibold text-ink-50" data-testid="finder-voicing-name">{name}</div>
+            <div className="mt-1 text-sm text-ink-300">{formula.name}</div>
+          </div>
+          <ChordFacts rootPc={rootPc} formula={formula} flats={flats} />
+          <Button variant="ghost" onClick={onArpeggio}>Arpeggio of {name.split('/')[0]} <LuArrowRight size={14} /></Button>
+        </div>
+      </Card>
+      <div className="min-w-0 space-y-5">
+        <Card title={`Voicings (${voicings.length})`} subtitle="Playable within one hand position: every required chord tone, the right bass note, at most one muted string inside the shape. Click a diagram to hear it."
+>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <Segmented size="sm" value={filter} onChange={setFilter} aria-label="Voicing style" options={FILTERS} data-testid="finder-filter" />
+            <Segmented size="sm" value={labels} onChange={setLabels} aria-label="Diagram labels" options={[{ value: 'finger', label: 'Fingers' }, { value: 'interval', label: 'Intervals' }, { value: 'note', label: 'Notes' }]} />
+          </div>
+          {voicings.length === 0 ? <p className="text-sm text-ink-300">No playable voicing of {name} matches this style in this tuning. Try “All”, or another bass note.</p> : (
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(128px,1fr))] gap-3" data-testid="finder-voicings">
+              {voicings.map((v, i) => (
+                <button key={v.frets.join(',')} type="button" onClick={() => { setSel(i); playNotes(v.midiNotes, 'strum'); }}
+                  className={cx('rounded-xl border p-2 text-center transition-colors', i === sel ? 'border-accent-400 bg-accent-500/10' : 'border-ink-700 bg-ink-800/60 hover:bg-ink-800')}
+                  aria-pressed={i === sel} aria-label={`${name} voicing ${v.frets.map((f) => (f === null ? 'x' : f)).join(' ')}`}>
+                  <ChordDiagram voicing={toDiagramVoicing(v, rootPc, formula)} tuning={tuning} labels={labels} size={0.9} />
+                  <div className="mt-1 font-mono text-[11px] text-ink-300">{v.frets.map((f) => (f === null ? 'x' : f)).join(' ')}</div>
+                  <div className="text-[10px] text-ink-400">{v.isOpen ? 'open' : `fret ${v.baseFret}`}{v.barreFret ? ` · barre ${v.barreFret}` : ''}</div>
+                </button>
+              ))}
+            </div>
+          )}
+        </Card>
+        {active && (
+          <Card title="On the neck" subtitle={`${name}: ${active.frets.map((f) => (f === null ? 'x' : f)).join(' ')}`} action={<Button size="sm" onClick={() => playNotes(active.midiNotes, 'strum')}><LuVolume2 size={14} /> Strum</Button>}>
+            <Fretboard tuning={tuning} maxFret={Math.max(12, (active.maxFret ?? 0) + 2)} marks={marks} leftHanded={s.profile.leftHanded} flats={flats} testId="finder-voicing-board" />
+          </Card>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Arpeggios ────────────────────────────────────────────────────────────
+
+/** String name for tab-style labels; a higher string that repeats a lower string's name is written in lower case (E … e). */
+function stringName(strings: number[], i: number, flats: boolean): string {
+  const name = pitchClassToName(strings[i], flats);
+  return strings.slice(0, i).some((m) => mod12(m) === mod12(strings[i])) ? name.toLowerCase() : name;
+}
+
+function ArpeggioTool({ rootPc, formula, flats, picker, onVoicings }: { rootPc: number; formula: ChordFormula; flats: boolean; picker: ReactNode; onVoicings: () => void }) {
+  const s = useStudent();
+  const tuning = useActiveTuning();
+  const [pos, setPos] = useState<string>('full');
+  const [labels, setLabels] = useState<'interval' | 'note'>('interval');
+  const [speed, setSpeed] = useState<'slow' | 'medium' | 'fast'>('medium');
+  const positions = useMemo(() => buildArpeggioPositions(rootPc, formula, tuning.strings, flats), [rootPc, formula, tuning.strings, flats]);
+  const full = useMemo(() => buildFullNeckArpeggio(rootPc, formula, tuning.strings, 15, flats), [rootPc, formula, tuning.strings, flats]);
+  useEffect(() => setPos('full'), [rootPc, formula.id, tuning.id]);
+  const current = positions.find((p) => p.id === pos);
+  const inPos = (n: { stringIndex: number; fret: number }) => !current || (n.fret >= current.minFret && n.fret <= current.maxFret);
+  const marks: FretMark[] = full.map((n) => ({
+    string: n.stringIndex, fret: n.fret,
+    tone: (!inPos(n) ? 'ghost' : n.isRoot ? 'root' : n.isGuideTone ? 'chord' : 'tone') as FretMark['tone'],
+    label: labels === 'interval' ? n.interval : n.noteName,
+  }));
+  const gap = speed === 'slow' ? 0.3 : speed === 'medium' ? 0.18 : 0.1;
+  const play = () => {
+    const path = current ? current.sweep.map((n) => n.midi) : [...new Set(full.map((n) => n.midi))].sort((a, b) => a - b);
+    playNotes([...path, ...path.slice(0, -1).reverse()], 'arpeggio', gap);
+  };
+  const name = chordName(rootPc, formula, flats);
+  return (
+    <div className="grid gap-5 xl:grid-cols-[minmax(0,320px)_minmax(0,1fr)]">
+      <Card title="Chord" className="min-w-0">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-3">
+          {picker}
+          <Field label="Tuning"><TuningPicker className="w-full min-w-0" value={tuning.id} onChange={(id) => store.setProfile({ tuningId: id })} /></Field>
+          <div className="text-3xl font-semibold text-ink-50">{name} <span className="text-base font-normal text-ink-300">arpeggio</span></div>
+          <ChordFacts rootPc={rootPc} formula={formula} flats={flats} />
+          <div className="grid gap-1.5 text-xs text-ink-300">
+            <span className="flex items-center gap-2"><span className="inline-block size-3 rounded-full" style={{ background: '#8466f5' }} /> Root</span>
+            <span className="flex items-center gap-2"><span className="inline-block size-3 rounded-full" style={{ background: '#5cc8ff' }} /> Guide tones (3rd, 7th): they define the chord's quality</span>
+            <span className="flex items-center gap-2"><span className="inline-block size-3 rounded-full" style={{ background: '#3a3360' }} /> Other chord tones</span>
+          </div>
+          <Button variant="ghost" onClick={onVoicings}>Voicings of {name} <LuArrowRight size={14} /></Button>
+        </div>
+      </Card>
+      <Card title={current ? current.label.replace(/^\d+\. /, '') : 'Full neck'}
+        subtitle={current ? (current.shape ? `Built around the ${current.shape}-shape chord. Play it string by string, one or two notes per string (the sweep path).` : 'One hand position.') : 'Every chord tone up to the 15th fret.'}
+        className="min-w-0">
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <Button size="sm" onClick={play} data-testid="arp-play"><LuPlay size={14} /> Play up &amp; down</Button>
+          <Segmented size="sm" value={speed} onChange={setSpeed} aria-label="Playback speed" options={[{ value: 'slow', label: 'Slow' }, { value: 'medium', label: 'Medium' }, { value: 'fast', label: 'Fast' }]} />
+        </div>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <Segmented size="sm" value={pos} onChange={setPos} aria-label="Position" options={[{ value: 'full', label: 'Full neck' }, ...positions.map((p, i) => ({ value: p.id, label: p.shape ? `${p.shape} shape` : `Pos. ${i + 1}` }))]} data-testid="arp-position" />
+          <Segmented size="sm" value={labels} onChange={setLabels} aria-label="Labels" options={[{ value: 'interval', label: 'Intervals' }, { value: 'note', label: 'Notes' }]} />
+        </div>
+        <Fretboard tuning={tuning} maxFret={15} marks={marks} leftHanded={s.profile.leftHanded} flats={flats} testId="arp-board" />
+        {current && (
+          <p className="mt-3 font-mono text-xs text-ink-300" data-testid="arp-sweep">
+            Sweep: {current.sweep.map((n) => `${stringName(tuning.strings, n.stringIndex, flats)}${n.fret}`).join(' → ')}
+          </p>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function IdentifyTool() {
   const s = useStudent();
   const tuning = useActiveTuning();
   const flats = s.profile.noteNames === 'flats';
@@ -91,8 +302,10 @@ export function ChordFinderPage() {
 
   return (
     <div>
-      <PageHeader eyebrow="Tools" title="Chord Finder" subtitle="Reverse chord lookup: put a shape on the fretboard, type the notes, or play it and let the app listen. It names the chord, explains every note, and lists alternative names."
-        actions={<Segmented value={mode} onChange={(m) => { setMode(m); if (m !== 'listen') stopListening(); }} aria-label="Input method" options={[{ value: 'fretboard', label: 'Fretboard' }, { value: 'notes', label: 'Type notes' }, { value: 'listen', label: 'Listen' }]} />} />
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <p className="max-w-2xl text-sm text-ink-300">Put a shape on the fretboard, type the notes, or play it and let the app listen. It names the chord, explains every note, and lists alternative names.</p>
+        <Segmented value={mode} onChange={(m) => { setMode(m); if (m !== 'listen') stopListening(); }} aria-label="Input method" options={[{ value: 'fretboard', label: 'Fretboard' }, { value: 'notes', label: 'Type notes' }, { value: 'listen', label: 'Listen' }]} />
+      </div>
       <div className="grid gap-5 xl:grid-cols-[1fr_380px]">
         <div className="min-w-0 space-y-5">
           {mode === 'fretboard' && (
@@ -168,7 +381,7 @@ export function ChordFinderPage() {
 }
 
 function BestMatch({ c, flats }: { c: ChordCandidate; flats: boolean }) {
-  const params = new URLSearchParams({ root: pcName(c.root, flats), type: c.def.id });
+  const params = new URLSearchParams({ tool: 'voicings', root: pcName(c.root, flats), type: c.def.id });
   return (
     <div>
       <div className="flex items-baseline gap-3">
@@ -180,7 +393,7 @@ function BestMatch({ c, flats }: { c: ChordCandidate; flats: boolean }) {
         {c.tokens.map((t) => <Badge key={t.pc} tone={t.token === '1' ? 'accent' : 'neutral'}>{pcName(t.pc, flats)} <span className="text-ink-400">{t.token}</span></Badge>)}
       </div>
       <p className="mt-3 text-xs text-ink-400">Formula {c.def.formula.join(' ')}{c.missing.length ? `; not played: ${c.missing.join(', ')} (optional in guitar voicings)` : ''}.</p>
-      <Link to={`/chords?${params.toString()}`} className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-accent-300 hover:underline">More voicings in the Chord Explorer <LuArrowRight size={14} /></Link>
+      <Link to={`/chord-finder?${params.toString()}`} className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-accent-300 hover:underline">More voicings of {pcName(c.root, flats)}{c.def.symbols[0]} <LuArrowRight size={14} /></Link>
     </div>
   );
 }

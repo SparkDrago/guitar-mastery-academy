@@ -2,7 +2,7 @@
  * Playable chord-voicing search for any tuning and string count.
  * A voicing assigns each string either a fret (0 = open) or null (muted).
  */
-import type { BuiltChord } from './chords';
+import { STANDARD_TUNING_MIDI, intervalLabel, mod12, pitchClassToName, type BuiltChord, type ChordFormula } from './chords';
 import { mod, pcOf } from './pitch';
 import type { Tuning } from './tunings';
 
@@ -179,4 +179,141 @@ export function findVoicings(chord: BuiltChord, tuning: Tuning, opts: VoicingOpt
 /** Notation like "x32010" (lowest string first). Frets above 9 use parentheses: "x(10)(12)...". */
 export function voicingString(frets: (number | null)[]): string {
   return frets.map((f) => (f === null ? 'x' : f > 9 ? `(${f})` : String(f))).join('');
+}
+
+// ── Semitone-formula voicing generator (any root, quality, slash bass, tuning) ──
+
+export type VoicingFilter = 'all' | 'open' | 'barre' | 'shell' | 'triad';
+
+export interface ChordVoicing {
+  /** One entry per string, lowest first; null = muted. */
+  frets: (number | null)[];
+  /** Suggested fingers per string (0 = open, null = muted). */
+  fingers: (number | null)[];
+  /** Sounding notes, lowest string first. */
+  midiNotes: number[];
+  baseFret: number;
+  maxFret: number;
+  /** Distance between the lowest and highest fretted note. */
+  span: number;
+  isOpen: boolean;
+  barreFret: number | null;
+  /** Pitch class of the lowest sounding note. */
+  bassPc: number;
+  /** Higher = more playable and idiomatic. */
+  score: number;
+}
+
+export interface ChordVoicingOptions {
+  /** MIDI note per string, lowest first (default standard tuning). */
+  tuning?: number[];
+  maxFret?: number;
+  /** Width of the fret window a hand covers (4 = e.g. frets 5–8). */
+  maxSpan?: number;
+  /** Slash bass, e.g. C/E → 4. Default: the root must be the lowest note. */
+  bassPc?: number | null;
+  filter?: VoicingFilter;
+  limit?: number;
+}
+
+/**
+ * Playable voicings of `rootPc` + `formula`: slides a hand-sized fret window up the
+ * neck, tries every combination of chord tones (and mutes) in it, and keeps shapes
+ * that contain every required tone, have the right bass, can be fingered (barres
+ * included) and mute at most one inner string.
+ */
+export function generateVoicings(rootPc: number, formula: ChordFormula, options: ChordVoicingOptions = {}): ChordVoicing[] {
+  const { tuning = STANDARD_TUNING_MIDI, maxFret = 15, maxSpan = 4, bassPc = null, filter = 'all', limit = 24 } = options;
+  const chordPcs = new Set(formula.intervals.map((i) => mod12(rootPc + i)));
+  const optionalPcs = new Set((formula.optional ?? []).map((i) => mod12(rootPc + i)));
+  const requiredPcs = new Set([...chordPcs].filter((pc) => !optionalPcs.has(pc)));
+  const allowed = new Set(chordPcs);
+  if (bassPc !== null) allowed.add(mod12(bassPc));
+  const wantBass = mod12(bassPc ?? rootPc);
+
+  const results: ChordVoicing[] = [];
+  const seen = new Set<string>();
+  const current: (number | null)[] = tuning.map(() => null);
+  for (let start = 1; start <= Math.max(1, maxFret - maxSpan + 1); start++) {
+    const end = start + maxSpan - 1;
+    const candidates = tuning.map((open) => {
+      const opts: (number | null)[] = [null];
+      if (start === 1 && allowed.has(mod12(open))) opts.push(0); // open strings belong to the first position
+      for (let f = start; f <= end; f++) if (allowed.has(mod12(open + f))) opts.push(f);
+      return opts;
+    });
+    const walk = (s: number) => {
+      if (s === tuning.length) {
+        const key = current.join(',');
+        if (seen.has(key)) return;
+        const v = evaluateVoicing(current, tuning, requiredPcs, wantBass, filter);
+        if (v) { seen.add(key); results.push(v); }
+        return;
+      }
+      for (const f of candidates[s]) { current[s] = f; walk(s + 1); }
+    };
+    walk(0);
+  }
+  results.sort((a, b) => b.score - a.score || a.baseFret - b.baseFret);
+  // Spread the picks over the neck: at most three per position first, then the best of the rest.
+  const perPos = new Map<number, number>();
+  const picked: ChordVoicing[] = [];
+  const rest: ChordVoicing[] = [];
+  for (const v of results) {
+    const pos = v.isOpen ? 0 : v.baseFret;
+    const n = perPos.get(pos) ?? 0;
+    if (n < 3 && picked.length < limit) { picked.push(v); perPos.set(pos, n + 1); } else rest.push(v);
+  }
+  return [...picked, ...rest.slice(0, Math.max(0, limit - picked.length))].sort((a, b) => b.score - a.score || a.baseFret - b.baseFret);
+}
+
+function evaluateVoicing(frets: (number | null)[], tuning: number[], requiredPcs: Set<number>, wantBass: number, filter: VoicingFilter): ChordVoicing | null {
+  const sounded: number[] = [];
+  const midiNotes: number[] = [];
+  const fretted: number[] = [];
+  frets.forEach((f, i) => { if (f !== null) { sounded.push(i); midiNotes.push(tuning[i] + f); if (f > 0) fretted.push(f); } });
+  if (sounded.length < 2 || (sounded.length < 3 && requiredPcs.size >= 3)) return null;
+  const pcs = new Set(midiNotes.map(mod12));
+  for (const r of requiredPcs) if (!pcs.has(r)) return null;
+  // The bass is the lowest *pitch*, which is not always the lowest string (e.g. an open D under a G-string note).
+  const bassPc = mod12(Math.min(...midiNotes));
+  if (bassPc !== wantBass) return null;
+
+  let innerMutes = 0;
+  for (let i = sounded[0] + 1; i < sounded[sounded.length - 1]; i++) if (frets[i] === null) innerMutes++;
+  if (innerMutes > 1) return null;
+
+  const minF = fretted.length ? Math.min(...fretted) : 0;
+  const maxF = fretted.length ? Math.max(...fretted) : 0;
+  const span = fretted.length ? maxF - minF : 0;
+  const fingering = assignFingers(frets);
+  if (!fingering) return null;
+  const isOpen = frets.some((f) => f === 0);
+  const barreFret = fingering.barre?.fret ?? null;
+
+  if (filter === 'open' && !isOpen) return null;
+  if (filter === 'barre' && barreFret === null) return null;
+  if (filter === 'triad' && sounded.length !== 3) return null;
+  if (filter === 'shell' && (sounded.length < 3 || sounded.length > 4)) return null;
+
+  let score = 100 - span * 6 - innerMutes * 18 - minF * 1.5 + sounded.length * 4;
+  if (isOpen) score += 12;
+  if (barreFret !== null) score += 4;
+  if (fretted.length <= 3) score += 6;
+  return { frets: [...frets], fingers: fingering.fingers, midiNotes, baseFret: minF || 1, maxFret: maxF, span, isOpen, barreFret, bassPc, score };
+}
+
+/** Adapt a generated voicing to the `Voicing` shape used by chord diagrams. */
+export function toDiagramVoicing(v: ChordVoicing, rootPc: number, formula: ChordFormula): Voicing {
+  const byPc = new Map(formula.intervals.map((iv) => [mod12(rootPc + iv), iv]));
+  const tokens = v.frets.map((f, i) => {
+    if (f === null) return null;
+    const iv = byPc.get(mod12(v.midiNotes[v.frets.slice(0, i).filter((x) => x !== null).length]));
+    return iv === undefined ? 'bass' : intervalLabel(iv, iv >= 12).replace('R', '1');
+  });
+  const fing = assignFingers(v.frets);
+  return {
+    frets: v.frets, fingers: v.fingers, barre: fing?.barre, tokens, baseFret: v.baseFret, bassPc: v.bassPc, score: v.score,
+    inversion: v.bassPc === mod12(rootPc) ? 'root position' : `${pitchClassToName(v.bassPc)} in the bass`,
+  };
 }

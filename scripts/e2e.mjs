@@ -502,6 +502,40 @@ test('chord finder: fretboard shape, typed notes and listening', async () => {
   } finally { await b.close(); }
 }, { ownBrowser: true });
 
+test('chord finder: voicings with filters and slash bass, arpeggio positions', async (b) => {
+  const page = await newPage(b);
+  await go(page, '/chord-finder?tool=voicings');
+  await page.getByTestId('finder-root').selectOption({ label: 'F' });
+  await page.getByTestId('finder-type').selectOption('maj');
+  await page.getByTestId('finder-filter').getByRole('radio', { name: 'Barre' }).click();
+  const first = page.getByTestId('finder-voicings').locator('button').first();
+  expect((await first.getAttribute('aria-label')) === 'F voicing 1 3 3 2 1 1', `F barre first: ${await first.getAttribute('aria-label')}`);
+  await first.click();
+  expect(await page.getByTestId('finder-voicing-board').locator('circle').count() > 0, 'selected voicing shown on the neck');
+  // Slash chord: C/E keeps E lowest.
+  await page.getByTestId('finder-root').selectOption({ label: 'C' });
+  await page.getByTestId('finder-filter').getByRole('radio', { name: 'All' }).click();
+  await page.getByTestId('finder-bass').selectOption({ label: '/E' });
+  expect((await page.getByTestId('finder-voicing-name').textContent()) === 'C/E');
+  const labels = await page.getByTestId('finder-voicings').locator('button').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')));
+  expect(labels.length > 0 && labels.includes('C/E voicing 0 3 2 0 1 0'), `C/E voicings: ${labels.slice(0, 4).join(' | ')}`);
+  // Arpeggios share the chord; positions follow CAGED.
+  await page.getByTestId('finder-tool').getByRole('radio', { name: 'Arpeggios' }).click();
+  await page.getByTestId('finder-type').selectOption('maj7');
+  await page.getByTestId('arp-position').getByRole('radio', { name: 'E shape' }).click();
+  const sweep = await page.getByTestId('arp-sweep').textContent();
+  expect(/^Sweep: E\d+/.test(sweep ?? ''), `sweep path starts on the low E string: ${sweep}`);
+  await page.getByTestId('arp-play').click();
+  // Identify still works and links back to voicings.
+  await page.getByTestId('finder-tool').getByRole('radio', { name: 'Identify' }).click();
+  await page.getByRole('radio', { name: 'Type notes' }).click();
+  await page.getByTestId('finder-notes').fill('A C E G');
+  await page.getByRole('link', { name: /More voicings of Am7/ }).click();
+  await page.getByTestId('finder-voicings').waitFor();
+  expect((await page.getByTestId('finder-voicing-name').textContent()) === 'Am7', 'link opens Am7 voicings');
+  expect(page.errors.length === 0, page.errors.join('\n'));
+});
+
 const DEMO_XML = path.join(root, 'tests/fixtures/demo-arrangement.xml');
 const demoXml = fs.readFileSync(DEMO_XML, 'utf8');
 const arrangementXml = (arr) => demoXml.replace('<arrangement>Lead</arrangement>', `<arrangement>${arr}</arrangement>`);

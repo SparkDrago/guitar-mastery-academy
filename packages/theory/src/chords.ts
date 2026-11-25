@@ -185,3 +185,71 @@ export function triadQuality(root: number, third: number, fifth: number): 'maj' 
   if (t === 4 && f === 8) return 'aug';
   return null;
 }
+
+// ── Semitone formulas and pitch helpers ──────────────────────────────────
+// A flat, semitone-based view of the chord catalog above (one source of truth),
+// for voicing generation, fret-based reverse lookup and arpeggios.
+
+export const NOTE_NAMES_SHARP = SHARP_NAMES;
+export const NOTE_NAMES_FLAT = FLAT_NAMES;
+
+/** E2 A2 D3 G3 B3 E4. */
+export const STANDARD_TUNING_MIDI = [40, 45, 50, 55, 59, 64];
+
+export interface ChordFormula {
+  id: string;
+  /** Suffix after the root, e.g. "", "m", "maj7", "m7b5". */
+  symbol: string;
+  name: string;
+  category: 'power' | 'triad' | 'suspended' | 'sixth' | 'seventh' | 'added' | 'extended' | 'altered';
+  /** Semitones from the root (0..23; 9ths, 11ths and 13ths stay compound: 14, 17, 21). */
+  intervals: number[];
+  /** Intervals that may be left out of a guitar voicing (e.g. 7 = the 5th). */
+  optional?: number[];
+  /** Higher = preferred when reverse lookup finds several names. */
+  priority: number;
+}
+
+/** Preference among equally good names (common chords first). */
+const PRIORITY: Record<string, number> = {
+  maj: 100, m: 99, '7': 95, maj7: 94, m7: 93, '9': 89, sus4: 88, maj9: 88, sus2: 87, m9: 87, add9: 86, '5': 85, madd9: 85,
+  m7b5: 84, dim7: 83, '6': 82, m6: 81, dim: 80, '7sus4': 79, aug: 78, '13': 78, m11: 77, mMaj7: 76, maj13: 76, '11': 75, m13: 75,
+  '6/9': 74, '7#9': 74, '7b9': 73, add4: 72, '7b5': 72, '7#11': 71, '7#5': 70, '7b13': 70, 'maj7#5': 69,
+};
+
+const CATEGORY: Record<ChordCategory, ChordFormula['category']> = {
+  power: 'power', triad: 'triad', suspended: 'suspended', sixth: 'sixth', seventh: 'seventh', add: 'added', extended: 'extended', altered: 'altered',
+};
+
+export const CHORD_FORMULAS: ChordFormula[] = CHORDS.map((def, i) => {
+  const ivs = parseFormula(def.formula);
+  const optional = (def.optional ?? []).map((tok) => ivs[def.formula.indexOf(tok)]?.semitones).filter((x): x is number => x !== undefined);
+  return {
+    id: def.id, symbol: def.symbols[0], name: def.name, category: CATEGORY[def.category],
+    intervals: ivs.map((iv) => iv.semitones), ...(optional.length ? { optional } : {}),
+    priority: PRIORITY[def.id] ?? 60 - i * 0.1,
+  };
+});
+
+export const INTERVAL_LABELS: Record<number, string> = {
+  0: 'R', 1: 'b2', 2: '2', 3: 'b3', 4: '3', 5: '4', 6: 'b5', 7: '5', 8: '#5', 9: '6', 10: 'b7', 11: '7',
+};
+
+export function mod12(n: number): number {
+  return ((n % 12) + 12) % 12;
+}
+
+export function pitchClassToName(pc: number, preferFlat = false): string {
+  return (preferFlat ? NOTE_NAMES_FLAT : NOTE_NAMES_SHARP)[mod12(pc)];
+}
+
+/** "R", "b3", "5"…; with `useExtensions`, 2/4/6 above an octave read 9/11/13 (and b2/#4/b6 read b9/#11/b13). */
+export function intervalLabel(semitones: number, useExtensions = false): string {
+  const pc = mod12(semitones);
+  if (useExtensions) {
+    const ext: Record<number, string> = { 1: 'b9', 2: '9', 3: '#9', 5: '11', 6: '#11', 8: 'b13', 9: '13' };
+    if (semitones >= 12 && ext[pc]) return ext[pc];
+    if (semitones < 12 && (pc === 2 || pc === 5 || pc === 9)) return ({ 2: '9', 5: '11', 9: '13' } as Record<number, string>)[pc];
+  }
+  return INTERVAL_LABELS[pc];
+}
