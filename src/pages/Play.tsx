@@ -423,7 +423,7 @@ function Stage({ song, audio, offset, opts, source, bpm, onExit }: { song: PlayS
           if (e.time < st.scheduledTo || e.time >= horizon) continue;
           const when = st.t0 + (e.time - st.base) / opts.speed;
           const ns = e.kind === 'note' ? [e] : e.notes;
-          ns.forEach((n, k) => { if (!n.techniques.includes('dead')) pluck(midiOfNote(song, n), Math.max(c.currentTime, when + k * 0.012), Math.max(0.25, n.sustain / opts.speed), 0.35); });
+          ns.forEach((n, k) => { if (!n.techniques.includes('dead') && !n.tied) pluck(midiOfNote(song, n), Math.max(c.currentTime, when + k * 0.012), Math.max(0.25, n.sustain / opts.speed), 0.35); });
         }
         if (opts.clickTrack) for (const b of song.beats) {
           if (b.time < st.scheduledTo || b.time >= horizon) continue;

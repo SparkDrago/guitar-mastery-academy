@@ -32,7 +32,6 @@ function techniquesOf(n: XmlNode): Technique[] {
   if (on('tremolo')) t.push('tremolo');
   if (on('tap')) t.push('tap');
   if (on('accent')) t.push('accent');
-  if (on('linkNext')) t.push('letRing');
   if (num(a.bend) > 0) t.push('bend');
   if (num(a.slideTo, -1) >= 0) t.push(num(a.slideTo) > num(a.fret) ? 'slideUp' : 'slideDown');
   else if (num(a.slideUnpitchTo, -1) >= 0) t.push('slideOut');
@@ -41,11 +40,25 @@ function techniquesOf(n: XmlNode): Technique[] {
 
 function noteOf(n: XmlNode): SongNote {
   const a = n.attrs;
-  const bend = num(a.bend);
+  const time = num(a.time);
   const slide = num(a.slideTo, -1);
+  const techniques = techniquesOf(n);
+  // Bend curve: <bendValues><bendValue time step/></bendValues>, steps in half steps.
+  const curve = children(child(n, 'bendValues'), 'bendValue')
+    .map((b) => ({ t: Math.max(0, num(b.attrs.time) - time), step: num(b.attrs.step) }))
+    .sort((x, y) => x.t - y.t);
+  let bend = num(a.bend);
+  if (curve.length) {
+    bend = Math.max(bend, ...curve.map((c) => c.step));
+    if (bend > 0 && !techniques.includes('bend')) techniques.push('bend');
+    // Starts already bent → pre-bend; ends lower than its peak → release.
+    if (curve[0].t < 0.02 && curve[0].step > 0) techniques.push('prebend');
+    if (bend > 0 && curve[curve.length - 1].step < bend - 0.01 && curve.findIndex((c) => c.step >= bend - 0.01) < curve.length - 1) techniques.push('release');
+  }
   return {
-    time: num(a.time), string: num(a.string), fret: num(a.fret), sustain: num(a.sustain), techniques: techniquesOf(n),
-    bend: bend > 0 ? bend : undefined, slideTo: slide >= 0 ? slide : undefined,
+    time, string: num(a.string), fret: num(a.fret), sustain: num(a.sustain), techniques,
+    bend: bend > 0 ? bend : undefined, bendCurve: curve.length ? curve : undefined, slideTo: slide >= 0 ? slide : undefined,
+    linkNext: a.linkNext === '1' ? true : undefined,
   };
 }
 
@@ -125,6 +138,12 @@ export function songFromRocksmithXml(text: string, id: string): RocksmithImport 
     const tech: Technique[] = [];
     if (c.attrs.palmMute === '1') tech.push('palmMute');
     if (c.attrs.fretHandMute === '1') tech.push('dead');
+    if (c.attrs.accent === '1') tech.push('accent');
+    // Chord-level techniques apply to every string of the chord.
+    for (const nt of notes) {
+      for (const k of tech) if (!nt.techniques.includes(k)) nt.techniques.push(k);
+      if (c.attrs.linkNext === '1') nt.linkNext = true;
+    }
     events.push({ kind: 'chord', time, name: tpl?.name ?? '', notes: notes.sort((a, b) => a.string - b.string), sustain: Math.max(0, ...notes.map((n) => n.sustain)), techniques: tech });
   }
   const shapes: SongShape[] = [];
@@ -137,6 +156,7 @@ export function songFromRocksmithXml(text: string, id: string): RocksmithImport 
   shapes.sort((a, b) => a.start - b.start);
   if (missingTemplates) warnings.push(`${missingTemplates} chord(s) referenced a missing chord template.`);
   events.sort((a, b) => a.time - b.time);
+  linkStrings(events, data.notes);
   if (!events.length) return { song: null, warnings, errors: ['The arrangement contains no notes.'] };
 
   const beats = children(child(root, 'ebeats'), 'ebeat').map((b) => ({ time: num(b.attrs.time), downbeat: num(b.attrs.measure, -1) >= 0 }));
@@ -158,6 +178,27 @@ export function songFromRocksmithXml(text: string, id: string): RocksmithImport 
     },
     warnings, errors: [],
   };
+}
+
+/**
+ * Per string, in time order: the note after a linkNext note is a continuation
+ * (tied), and a hopo note without an explicit hammer/pull becomes one by
+ * comparing it with the previous note on that string.
+ */
+function linkStrings(events: SongEvent[], rawNotes: XmlNode[]) {
+  const hopoAt = new Set(rawNotes.filter((n) => n.attrs.hopo === '1').map((n) => `${num(n.attrs.time).toFixed(4)}:${num(n.attrs.string)}`));
+  const last = new Map<number, SongNote>();
+  for (const e of events) {
+    const ns = e.kind === 'note' ? [e as SongNote] : e.notes;
+    for (const n of ns) {
+      const prev = last.get(n.string);
+      if (prev?.linkNext) n.tied = true;
+      if (hopoAt.has(`${n.time.toFixed(4)}:${n.string}`) && !n.techniques.includes('hammer') && !n.techniques.includes('pull')) {
+        n.techniques.push(prev && prev.fret > n.fret ? 'pull' : 'hammer');
+      }
+      last.set(n.string, n);
+    }
+  }
 }
 
 function prettySection(s: string): string {

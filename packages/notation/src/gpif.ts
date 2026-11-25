@@ -68,6 +68,7 @@ export function songFromGpif(gpif: string, id: string, trackIndex?: number): { s
   const sections: SongSection[] = [];
   let time = 0;
   let tieCarry = new Map<number, SongNote>();
+  const slideFrom = new Map<number, SongNote>();
   const lastFret = new Map<number, number>();
   masterBars.forEach((mb, bi) => {
     const [numr, den] = (textOf(mb, 'Time') ?? '4/4').split('/').map(Number);
@@ -112,13 +113,38 @@ export function songFromGpif(gpif: string, id: string, trackIndex?: number): { s
         if (prop(n, 'HopoDestination')) tech.push((lastFret.get(s) ?? -1) > f ? 'pull' : 'hammer');
         if (prop(n, 'PalmMuted')) tech.push('palmMute');
         if (prop(n, 'Muted')) tech.push('dead');
-        if (prop(n, 'Bended')) tech.push('bend');
-        if (prop(n, 'Slide')) tech.push('slideUp');
-        if (prop(n, 'HarmonicType')) tech.push('harmonic');
+        // Bends: values in GP are 100 per whole step (2 semitones).
+        const bOrigin = num(textOf(prop(n, 'BendOriginValue'), 'Float'), 0);
+        const bMiddle = num(textOf(prop(n, 'BendMiddleValue'), 'Float'), 0);
+        const bDest = num(textOf(prop(n, 'BendDestinationValue'), 'Float'), 0);
+        const bPeak = Math.max(bOrigin, bMiddle, bDest);
+        if (prop(n, 'Bended') && bPeak > 0) {
+          tech.push('bend');
+          if (bOrigin > 0) tech.push('prebend');
+          if (bDest < bPeak - 1) tech.push('release');
+        }
+        // Slide flags: 1 shift, 2 legato (direction from the next note), 4 out down, 8 out up, 16 in from below, 32 in from above.
+        const slide = num(textOf(prop(n, 'Slide'), 'Flags'), 0);
+        if (slide & 3) tech.push('slideUp'); // direction and target fixed once the next note on the string is known
+        if (slide & 12) tech.push('slideOut');
+        if (slide & 48) tech.push('slideIn');
+        const harm = textOf(prop(n, 'HarmonicType'), 'HType');
+        if (harm !== undefined || prop(n, 'HarmonicType')) tech.push(!harm || /natural/i.test(harm) ? 'harmonic' : 'artificialHarmonic');
         if (child(n, 'Vibrato')) tech.push('vibrato');
         if (prop(n, 'Tapped')) tech.push('tap');
-        const bendDest = num(textOf(prop(n, 'BendDestinationValue'), 'Float'), 0) || num(textOf(prop(n, 'BendMiddleValue'), 'Float'), 0);
-        const note: SongNote = { time: t, string: s, fret: f, sustain: len * spq >= 0.45 ? len * spq * 0.9 : 0, techniques: tech, bend: bendDest ? bendDest / 50 : undefined };
+        if (child(n, 'LetRing')) tech.push('letRing');
+        if (num(textOf(n, 'Accent'), 0) & 12) tech.push('accent');
+        if (child(n, 'AntiAccent')) tech.push('ghost');
+        if (child(beat, 'Tremolo')) tech.push('tremolo');
+        const note: SongNote = { time: t, string: s, fret: f, sustain: len * spq >= 0.45 ? len * spq * 0.9 : 0, techniques: tech, bend: bPeak > 0 && tech.includes('bend') ? bPeak / 50 : undefined };
+        const pendingSlide = slideFrom.get(s);
+        if (pendingSlide) {
+          // The previous note on this string slid here: set its target and direction.
+          pendingSlide.slideTo = f;
+          if (f < pendingSlide.fret) pendingSlide.techniques = pendingSlide.techniques.map((k) => (k === 'slideUp' ? 'slideDown' : k));
+          slideFrom.delete(s);
+        }
+        if (slide & 3) slideFrom.set(s, note);
         made.push(note);
         lastFret.set(s, f);
         if (tie?.attrs.origin === 'true') nextCarry.set(s, note);

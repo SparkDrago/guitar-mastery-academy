@@ -93,6 +93,11 @@ export class PlayScorer {
       if (f.midi === null) return false;
       const want = midiOfNote(this.song, e);
       const diff = f.midi - want;
+      if (e.techniques.includes('artificialHarmonic')) {
+        // A pinch harmonic sounds an overtone of the fretted note: its pitch class or a fifth above, in any octave.
+        const pc = ((Math.round(diff) % 12) + 12) % 12;
+        return (pc === 0 || pc === 7) && Math.abs(diff - Math.round(diff)) <= 0.5;
+      }
       // A bent note may be detected anywhere between its start and target pitch.
       const bendUp = e.bend ? e.bend + 0.5 : 0.5;
       if (diff >= -0.5 && diff <= bendUp) return true;
