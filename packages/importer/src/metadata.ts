@@ -82,9 +82,14 @@ export function metaFromManifest(text: string, path: string): SongMeta[] {
 
 /** "Scorpions_-_Send_me_an_Angel_p.psarc" → { artist: "Scorpions", title: "Send me an Angel" }. */
 export function guessFromFileName(name: string): { artist?: string; title?: string } {
-  const stem = name.replace(/\.[^.]+$/, '').replace(/_[pm]$/i, '').replace(/_v\d+(_\d+)*$/i, '');
-  const parts = stem.split(/_-_|\s+-\s+/);
-  const clean = (s: string) => s.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+  // Strip the extension, the platform suffix (_p PC, _m Mac) and a version tag (_v, _v2, _v1_3).
+  const stem = name.replace(/\.[^.]+$/, '').replace(/_[pm]$/i, '').replace(/_v\d*(_\d+)*$/i, '');
+  const clean = (s: string) => s.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  // "Artist_-_Title" or "Artist - Title".
+  let parts = stem.split(/_-_|\s+-\s+/);
   if (parts.length >= 2) return { artist: clean(parts[0]), title: clean(parts.slice(1).join(' - ')) };
+  // "Artist-Name_Song-Title": words joined by hyphens, artist and title by one underscore.
+  parts = stem.split('_');
+  if (parts.length === 2 && parts.every((p) => p.length > 0)) return { artist: clean(parts[0]), title: clean(parts[1]) };
   return { title: clean(stem) || undefined };
 }

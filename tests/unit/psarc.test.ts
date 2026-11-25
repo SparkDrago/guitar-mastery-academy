@@ -166,3 +166,11 @@ test('cancellation stops the pipeline', async () => {
   ctrl.abort();
   await assert.rejects(() => runImport([input('a.xml', new TextEncoder().encode(demo))], { signal: ctrl.signal }), /cancelled/);
 });
+
+test('song names guessed from package file names', async () => {
+  const { guessFromFileName } = await import('@gma/importer');
+  assert.deepEqual(guessFromFileName('Pink-Floyd_Goodbye-Blue-Sky_v_p.psarc'), { artist: 'Pink Floyd', title: 'Goodbye Blue Sky' });
+  assert.deepEqual(guessFromFileName('Scorpions_-_Send_me_an_Angel_p.psarc'), { artist: 'Scorpions', title: 'Send me an Angel' });
+  assert.deepEqual(guessFromFileName('Some_Band_-_Song_v1_2_p.psarc'), { artist: 'Some Band', title: 'Song' });
+  assert.deepEqual(guessFromFileName('mysong_p.psarc'), { title: 'mysong' });
+});
