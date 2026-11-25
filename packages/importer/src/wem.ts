@@ -3,7 +3,7 @@
  * if the WEM wraps raw PCM). Runs purely in JS/TS so it works inside the
  * import Web Worker and Node unit tests.
  */
-import { convertWemToOgg as ww2oggConvert, CodebookLibrary } from 'ww2ogg-ts';
+import { convertWwiseRiffToOgg, getPackedCodebooks } from 'ww2ogg-ts';
 import { ascii } from './bytes';
 
 export interface WemResult {
@@ -48,9 +48,17 @@ export function convertWem(data: Uint8Array): WemResult {
 
   // Wwise Vorbis (0xFFFF) — standard for Rocksmith 2014 PSARC audio.
   if (info.tag === 0xffff) {
-    const ogg = ww2oggConvert(data, {
-      codebooks: CodebookLibrary.aoTuV,
-    });
+    // Rocksmith 2014 WEMs use the aoTuV 6.03 codebook; fall back to standard if needed.
+    let ogg: Uint8Array;
+    try {
+      ({ ogg } = convertWwiseRiffToOgg(data, {
+        codebooks: getPackedCodebooks('aoTuV_603'),
+      }));
+    } catch {
+      ({ ogg } = convertWwiseRiffToOgg(data, {
+        codebooks: getPackedCodebooks('standard'),
+      }));
+    }
     return {
       bytes: ogg instanceof Uint8Array ? ogg : new Uint8Array(ogg),
       container: 'ogg',
