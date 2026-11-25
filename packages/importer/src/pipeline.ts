@@ -11,7 +11,7 @@ import { gpTracks, gpifFromGpFile, songFromGpif, songFromRocksmithXml, validateS
 import { ArchiveError, findArchiveHandler, type OpenedArchive } from './archives';
 import { blobFingerprint, ImportAborted, readExact, sha256Hex, throwIfAborted, type ByteSource } from './bytes';
 import { classify, isPreviewAudio, roleSummary, SNIFF_BYTES, type Classification } from './classify';
-import { convertWem } from './wem';
+import { convertWem, WemUnsupportedError } from './wem';
 import { songFromRocksmithSng } from './sng';
 import { groupSongs, type ArrangementItem, type AudioItem, type MetaHint, type SongDraft } from './grouping';
 import { guessFromFileName, metaFromArrangementXml, metaFromManifest } from './metadata';
@@ -346,18 +346,18 @@ async function handleItem(it: Item, cls: Classification, c: Collect, signal?: Ab
       return { status: 'imported', detail: `${cls.kind}${a.preview ? ' (preview clip)' : ''}, ${(blob.size / 1024 / 1024).toFixed(1)} MiB.` };
     }
     case 'wwise-audio': {
-      const raw = await it.bytes();
       let converted;
       try {
-        converted = convertWem(raw);
+        converted = convertWem(await it.bytes());
       } catch (e) {
-        return { status: 'unsupported', detail: (e as Error).message };
+        if (e instanceof WemUnsupportedError) return { status: 'unsupported', detail: e.message };
+        throw e;
       }
       const preview = isPreviewAudio(it.name);
-      const outName = it.name.replace(/\.wem$/i, `.${converted.container}`);
+      const name = it.name.replace(/\.wem$/i, '') + `.${converted.container}`;
       const blob = new Blob([converted.bytes as BlobPart], { type: converted.mime });
       c.audio.push({
-        key: `au${++c.seq}`, name: outName, path: it.path, origin: it.origin, scope: it.scope, size: blob.size,
+        key: `au${++c.seq}`, name, path: it.path, origin: it.origin, scope: it.scope, size: blob.size,
         container: converted.container, mime: converted.mime, preview, blob, fingerprint: await blobFingerprint(blob),
       });
       return { status: 'imported', detail: `${converted.codec} converted to ${converted.container.toUpperCase()}${preview ? ' (preview clip)' : ''}, ${(blob.size / 1024 / 1024).toFixed(1)} MiB.` };

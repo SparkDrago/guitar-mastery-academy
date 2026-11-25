@@ -13,14 +13,30 @@ export interface SongNote {
   /** Seconds the note rings (0 = short). */
   sustain: number;
   techniques: Technique[];
-  /** Bend in semitones. */
+  /** Bend in semitones (the highest point of the bend). */
   bend?: number;
+  /** Bend shape: semitones at seconds after the note starts (Rocksmith bendValues). */
+  bendCurve?: { t: number; step: number }[];
   slideTo?: number;
+  /** Rings on into the next note on the same string without a new pick attack. */
+  linkNext?: boolean;
+  /** Continuation of the previous note on this string (target of a linkNext): not picked again. */
+  tied?: boolean;
 }
 
 export type SongEvent =
   | ({ kind: 'note' } & SongNote)
   | { kind: 'chord'; time: number; name: string; notes: SongNote[]; sustain: number; techniques: Technique[] };
+
+/** A held chord shape (Rocksmith hand shape). Arpeggios are shown as a frame while their notes play one by one. */
+export interface SongShape {
+  start: number;
+  end: number;
+  name: string;
+  /** Fret per string, null = not part of the shape. */
+  frets: (number | null)[];
+  arpeggio: boolean;
+}
 
 export interface SongSection {
   name: string;
@@ -45,11 +61,28 @@ export interface PlaySong {
   beats: { time: number; downbeat: boolean }[];
   sections: SongSection[];
   events: SongEvent[];
+  /** Optional chord shapes held over time (arpeggios). */
+  shapes?: SongShape[];
   source: 'exercise' | 'tab' | 'rocksmith-xml' | 'guitar-pro';
 }
 
-export const midiOfNote = (song: Pick<PlaySong, 'tuning' | 'capo'>, n: Pick<SongNote, 'string' | 'fret'>): number =>
-  song.tuning.strings[n.string] + (n.fret === 0 ? song.capo : n.fret);
+/** Natural harmonic nodes → semitones above the open string. */
+const HARMONIC_INTERVAL: Record<number, number> = { 12: 12, 24: 24, 7: 19, 19: 19, 5: 24, 4: 28, 9: 28, 16: 28, 3: 31 };
+
+/**
+ * Sounding pitch of a note. A natural harmonic sounds the node's overtone of the
+ * (capoed) open string, not the fretted pitch: at fret 5 two octaves up, at 7 an
+ * octave and a fifth.
+ */
+export const midiOfNote = (song: Pick<PlaySong, 'tuning' | 'capo'>, n: Pick<SongNote, 'string' | 'fret'> & { techniques?: SongNote['techniques'] }): number => {
+  const open = song.tuning.strings[n.string] + song.capo;
+  if (n.techniques?.includes('harmonic')) {
+    const node = n.fret - song.capo;
+    const iv = HARMONIC_INTERVAL[node];
+    if (iv !== undefined) return open + iv;
+  }
+  return song.tuning.strings[n.string] + (n.fret === 0 ? song.capo : n.fret);
+};
 
 /** Single notes and chord notes flattened (handy for statistics and the camera). */
 export function allNotes(song: PlaySong): SongNote[] {

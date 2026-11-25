@@ -82,3 +82,27 @@ Play mode uses a timed model (`PlaySong`, seconds rather than beats; see `packag
 | Guitar Mastery `.json` | a serialized `PlaySong` (`"format": "gma-song"`). |
 
 A recording can be attached to any imported song; the sync offset (−3…+3 s) aligns it with the notes.
+
+### Techniques in Play mode
+
+The importers read each technique, the highway draws it, and the scorer judges it as follows.
+
+| Technique | Rocksmith XML | Guitar Pro 7/8 | On the highway | Scoring |
+|---|---|---|---|---|
+| Hammer-on / pull-off | `hammerOn`, `pullOff`, `hopo` (direction from the previous note) | `HopoDestination` | `H` / `P` | by pitch; no pick attack needed |
+| Bend | `bend`, `<bendValues>` (half steps) | `Bended` + origin/middle/destination (100 = whole step) | tail lifts with the bend curve; `↑½`, `↑full`, `↑1½`, `↑2` | any pitch from the start to the bend peak |
+| Pre-bend / release | first bend point already bent / curve ends below its peak | origin > 0 / destination below peak | `pb↑full`, trailing `↓` | as bend |
+| Vibrato | `vibrato` | `<Vibrato>` | wavy tail, `~` | by pitch |
+| Tremolo picking | `tremolo` | beat `<Tremolo>` | zig-zag tail, `≋` | by pitch |
+| Slide | `slideTo` | `Slide` flags 1/2 (target = next note on the string) | tail travels to the target fret, `↗9` / `↘3` | by the starting pitch |
+| Slide out / in | `slideUnpitchTo` | flags 4/8, 16/32 | `↘out`, `↗in` | by pitch |
+| Palm mute | `palmMute` (note or chord) | `PalmMuted` | `PM` (chords: next to the name) | by pitch |
+| Fret-hand mute | `mute`, chord `fretHandMute` | `Muted` | dimmed gem with `×` | any sound |
+| Natural harmonic | `harmonic` | `HarmonicType` Natural | diamond gem | the overtone's pitch (fret 12: +12, 7/19: +19, 5/24: +24, 4/9/16: +28) |
+| Pinch / artificial harmonic | `harmonicPinch` | other `HarmonicType` | diamond gem, `PH` | fretted pitch class or a fifth above, any octave |
+| Tie / link | `linkNext` | `<Tie>` (extends the note) | next note drawn hollow (do not pick again) | by pitch |
+| Accent | `accent` | `<Accent>` 4/8 | white outline (chords: thicker frame) | not scored separately |
+| Tap | `tap` | `Tapped` | `T` | by pitch |
+| Arpeggio | hand shape with an `-arp` template | — | dashed frame with `Am arp.` | notes judged one by one |
+
+Marks are hidden on notes still near the horizon so the far highway stays readable. Not used yet: Rocksmith `ignore`, `pickDirection`, fingering (`leftHand`, chord template fingers), bass `slap`/`pluck`, and whammy-bar bends in Guitar Pro.

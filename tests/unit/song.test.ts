@@ -130,3 +130,28 @@ test('songFromTabScore converts beats to seconds with a count-in', () => {
   const twice = songFromTabScore(sc, { id: 'y', bpm: 120, repeats: 2 });
   assert.equal(twice.events.length, 6);
 });
+
+test('Guitar Pro techniques: slide direction and target, harmonics, bends, tremolo, accents', async () => {
+  const P = (name: string, inner: string) => `<Property name="${name}">${inner}</Property>`;
+  const note = (id: number, s: number, f: number, extra = '', props = '') =>
+    `<Note id="${id}">${extra}<Properties>${P('String', `<String>${s}</String>`)}${P('Fret', `<Fret>${f}</Fret>`)}${props}</Properties></Note>`;
+  const gpif = GPIF
+    .replace(/<Voices><Voice[\s\S]*?<\/Voices>/, '<Voices><Voice id="0"><Beats>0 1 2 3</Beats></Voice><Voice id="1"><Beats>4</Beats></Voice></Voices>')
+    .replace(/<Beats><Beat[\s\S]*?<\/Beats>/, '<Beats><Beat id="0"><Rhythm ref="0"/><Notes>0</Notes></Beat><Beat id="1"><Rhythm ref="0"/><Notes>1</Notes></Beat><Beat id="2"><Rhythm ref="0"/><Notes>2</Notes></Beat><Beat id="3"><Rhythm ref="0"/><Tremolo>1/8</Tremolo><Notes>3</Notes></Beat><Beat id="4"><Rhythm ref="2"/><Notes>4</Notes></Beat></Beats>')
+    .replace(/<Notes>\n[\s\S]*?<\/Notes>/, `<Notes>
+${note(0, 3, 7, '<Accent>8</Accent>', P('Slide', '<Flags>2</Flags>'))}
+${note(1, 3, 5, '', P('HarmonicType', '<HType>Pinch</HType>'))}
+${note(2, 2, 7, '', P('Bended', '<Enable/>') + P('BendOriginValue', '<Float>100</Float>') + P('BendMiddleValue', '<Float>100</Float>') + P('BendDestinationValue', '<Float>0</Float>'))}
+${note(3, 2, 5)}
+${note(4, 1, 12, '', P('HarmonicType', '<HType>Natural</HType>'))}
+</Notes>`);
+  const s = songFromGpif(await gpifFromGpFile(makeZip({ 'VERSION': '7.0', 'Content/score.gpif': gpif })), 'gp2').song!;
+  const ns = s.events.map((e) => (e.kind === 'note' ? e : e.notes[0]));
+  assert.deepEqual(ns[0].techniques.sort(), ['accent', 'slideDown']);
+  assert.equal(ns[0].slideTo, 5, 'legato slide targets the next note on the string');
+  assert.deepEqual(ns[1].techniques, ['artificialHarmonic']);
+  assert.deepEqual(ns[2].techniques, ['bend', 'prebend', 'release']);
+  assert.equal(ns[2].bend, 2);
+  assert.deepEqual(ns[3].techniques, ['tremolo']);
+  assert.deepEqual(ns[4].techniques, ['harmonic']);
+});

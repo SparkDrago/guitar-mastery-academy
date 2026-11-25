@@ -27,6 +27,7 @@ export const SNIFF_BYTES = 4096;
 
 const PREVIEW = /(^|[_\-. ])preview([_\-. ]|$)/i;
 
+/** True when a file name marks audio as a short preview clip. */
 export const isPreviewAudio = (name: string) => PREVIEW.test(baseName(name).toLowerCase());
 
 function xmlRoot(head: Uint8Array): string | null {
@@ -76,6 +77,8 @@ export function classify(name: string, head: Uint8Array): Classification {
   }
   if (magic === 'OggS') return { role: 'audio', kind: 'OGG audio', audio: { container: 'ogg', mime: 'audio/ogg', preview: PREVIEW.test(base) } };
   const riff = riffAudio(head);
+  // A .wem always goes through the Wwise converter, even when it wraps PCM (it may be big-endian RIFX).
+  if (riff && ext === 'wem') return { role: 'wwise-audio', kind: 'Wwise audio (.wem)' };
   if (riff === 'wav') return { role: 'audio', kind: 'WAV audio', audio: { container: 'wav', mime: 'audio/wav', preview: PREVIEW.test(base) } };
   if (riff === 'wem' || ext === 'wem') return { role: 'wwise-audio', kind: 'Wwise audio (.wem)' };
   if (magic === 'BKHD' || ext === 'bnk') return { role: 'wwise-bank', kind: 'Wwise sound bank (.bnk)' };
@@ -118,7 +121,7 @@ export function roleSummary(role: FileRole): { status: 'import' | 'metadata' | '
     case 'rs-manifest': case 'rs-hsan': return { status: 'metadata', detail: 'Song details (title, artist, album, arrangement).' };
     case 'vocals-xml': return { status: 'not-used', detail: 'Lyrics: Play mode does not show lyrics yet.' };
     case 'showlights-xml': return { status: 'not-used', detail: 'Stage lighting cues: not used by Play mode.' };
-    case 'wwise-audio': return { status: 'import', detail: 'Wwise audio (.wem): converted to OGG Vorbis in the browser.' };
+    case 'wwise-audio': return { status: 'import', detail: 'Wwise audio (.wem): Wwise Vorbis is converted to OGG, and PCM/ADPCM to WAV in the browser.' };
     case 'wwise-bank': return { status: 'unsupported', detail: 'Wwise sound bank (playback events for the game’s audio engine). Browsers cannot use it.' };
     case 'sng': return { status: 'import', detail: 'Rocksmith 2014 binary chart (.sng): decrypted and parsed in the browser.' };
     case 'guitar-pro-legacy': return { status: 'unsupported', detail: 'Older Guitar Pro format; save it as .gp (Guitar Pro 7/8) to import.' };

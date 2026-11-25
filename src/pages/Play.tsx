@@ -13,6 +13,7 @@ import {
   type PlaySong, type SongEvent,
 } from '@gma/notation';
 import { PlayScorer, type Exercise, type PlayStats } from '@gma/learning';
+import { convertWem } from '@gma/importer';
 import { chroma as chromaOf, yin } from '@gma/audio';
 import { reverseChordLookup, pcName } from '@gma/theory';
 import { useAllExercises, useStudent } from '@/lib/hooks';
@@ -20,6 +21,7 @@ import { store } from '@/lib/store';
 import { cx, nowIso, uid } from '@/lib/core';
 import { MicInput, click, getContext, micErrorMessage, pluck, type MicError } from '@/lib/audio';
 import { library, type LibraryArrangement, type LibrarySong } from '@/lib/idb';
+import { chordNameReport, withChordNames, type ChordNameMode } from '@/lib/chordNames';
 import { navigate, useDocumentTitle, useLocation } from '@/lib/router';
 import { Badge, Button, Callout, Card, Empty, Field, Modal, PageHeader, Segmented, Select, Stepper, Toggle } from '@/components/ui';
 import { HBars } from '@/components/charts';
@@ -37,6 +39,8 @@ interface PlayOptions {
   guide: boolean;
   clickTrack: boolean;
   lowOnTop: boolean;
+  /** Chord names as the chart has them, or worked out from the notes played. */
+  chordNames: ChordNameMode;
 }
 
 const PREF_KEY = 'gma.play.prefs';
@@ -134,7 +138,7 @@ const bestOf = (lib: LibrarySong) => { const b = lib.arrangements.map((a) => a.b
 // ── Setup ────────────────────────────────────────────────────────────────
 
 function SetupPanel({ source, onSelect, onStart, onChanged }: { source: Source | null; onSelect: (a: LibraryArrangement) => void; onStart: (p: { song: PlaySong; audio: Blob | null; offset: number; opts: PlayOptions; source: Source; bpm: number }) => void; onChanged: () => Promise<unknown> }) {
-  const [opts, setOpts] = useState<PlayOptions>(() => readJson(PREF_KEY, { speed: 1, fromSection: 0, toSection: 0, loop: false, useMic: true, anyOctave: false, guide: true, clickTrack: true, lowOnTop: true }));
+  const [opts, setOpts] = useState<PlayOptions>(() => readJson(PREF_KEY, { speed: 1, fromSection: 0, toSection: 0, loop: false, useMic: true, anyOctave: false, guide: true, clickTrack: true, lowOnTop: true, chordNames: 'chart' }));
   const [bpm, setBpm] = useState(80);
   const [audio, setAudio] = useState<Blob | null>(null);
   const [offset, setOffset] = useState(0);
@@ -155,15 +159,27 @@ function SetupPanel({ source, onSelect, onStart, onChanged }: { source: Source |
   }, [source, bpm]);
   useEffect(() => { if (song) setOpts((o) => ({ ...o, fromSection: 0, toSection: Math.max(0, song.sections.length - 1) })); }, [song?.id, song?.sections.length]);
 
+  const nameReport = useMemo(() => (song && source?.kind === 'imported' ? chordNameReport(song) : { shapes: 0, differing: [] }), [song, source?.kind]);
+
   if (!source || !song) return <Card title="Get ready"><p className="text-sm text-ink-300">Pick a song or exercise to see its details and start playing.</p></Card>;
 
   const notes = allNotes(song);
   const frets = notes.map((n) => n.fret);
   const best = source.kind === 'imported' ? source.arr.best : readJson<Record<string, { accuracy: number }>>(BEST_KEY, {})[song.id];
 
-  const attachAudio = async (f: File) => {
+  const attachAudio = async (picked: File) => {
     if (source.kind !== 'imported') return;
     const lib = source.lib;
+    let f: File = picked;
+    if (/\.wem$/i.test(picked.name)) {
+      try {
+        const r = convertWem(new Uint8Array(await picked.arrayBuffer()));
+        f = new File([r.bytes as BlobPart], picked.name.replace(/\.wem$/i, '.wav'), { type: r.mime });
+      } catch (e) {
+        store.toast('This .wem file cannot be used', (e as Error).message, 'warning');
+        return;
+      }
+    }
     const key = lib.audio?.key ?? `audio-${lib.id}`;
     await library.putAudio(key, f);
     await library.put({ ...lib, audio: { key, name: f.name, size: f.size, type: f.type }, sync: { ...lib.sync, method: 'manual' } });
@@ -200,11 +216,11 @@ function SetupPanel({ source, onSelect, onStart, onChanged }: { source: Source |
         )}
         {source.kind === 'exercise' && <Field label="Tempo"><Stepper value={bpm} onChange={setBpm} min={30} max={260} step={2} suffix="bpm" label="Exercise tempo" /></Field>}
         {source.kind === 'imported' && (
-          <Field label="Recording" hint="Your own audio of this song (MP3, OGG, WAV, M4A). Stays on this device.">
+          <Field label="Recording" hint="Your own audio of this song (MP3, OGG, WAV, M4A, or PCM/ADPCM .wem). Stays on this device.">
             <div className="flex flex-wrap items-center gap-2">
               <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-ink-700 bg-ink-800 px-3 py-2 text-sm text-ink-100 hover:bg-ink-700">
                 <LuMusic size={14} /> {source.lib.audio ? 'Replace audio' : 'Add audio'}
-                <input type="file" accept="audio/*,.ogg,.mp3,.wav,.m4a,.flac" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; if (f) void attachAudio(f); }} data-testid="play-audio" />
+                <input type="file" accept="audio/*,.ogg,.mp3,.wav,.m4a,.flac,.wem" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void attachAudio(f); }} data-testid="play-audio" />
               </label>
               <span className="truncate text-xs text-ink-400">{source.lib.audio?.name ?? 'Without audio, a click and guide tones play instead.'}</span>
             </div>
@@ -235,8 +251,16 @@ function SetupPanel({ source, onSelect, onStart, onChanged }: { source: Source |
           {!audio && <Toggle checked={opts.clickTrack} onChange={(v) => set({ clickTrack: v })} label="Click on every beat" />}
           <Toggle checked={opts.lowOnTop} onChange={(v) => set({ lowOnTop: v })} label="Low string on top (off = tab order)" />
         </div>
+        {source.kind === 'imported' && nameReport.shapes > 0 && (
+          <Field label="Chord names" hint={nameReport.differing.length
+            ? `${nameReport.differing.length} of the chart's ${nameReport.shapes} chord shapes are named differently from what their notes spell, e.g. ${nameReport.differing.slice(0, 2).map((d) => `${d.chart} (${d.frets}) = ${d.notes}`).join(', ')}.`
+            : `All ${nameReport.shapes} chord names in the chart match their notes.`}>
+            <Segmented size="sm" value={opts.chordNames} onChange={(v) => set({ chordNames: v as ChordNameMode })} aria-label="Chord names"
+              options={[{ value: 'chart', label: 'From the chart' }, { value: 'notes', label: 'From the notes' }]} data-testid="play-chord-names" />
+          </Field>
+        )}
         <div className="flex flex-wrap gap-2 pt-1">
-          <Button variant="primary" size="lg" onClick={() => onStart({ song, audio, offset, opts, source, bpm })} data-testid="play-start"><LuPlay size={18} /> Play</Button>
+          <Button variant="primary" size="lg" onClick={() => onStart({ song: withChordNames(song, opts.chordNames), audio, offset, opts, source, bpm })} data-testid="play-start"><LuPlay size={18} /> Play</Button>
           {source.kind === 'imported' && <Button variant="ghost" onClick={() => void remove()} aria-label="Remove song"><LuTrash2 size={16} /></Button>}
         </div>
         <p className="text-xs text-ink-400">Tip: plug in or play close to the microphone, and use headphones when a recording is playing so the app hears your guitar, not the speakers.</p>
@@ -412,7 +436,7 @@ function Stage({ song, audio, offset, opts, source, bpm, onExit }: { song: PlayS
           if (e.time < st.scheduledTo || e.time >= horizon) continue;
           const when = st.t0 + (e.time - st.base) / opts.speed;
           const ns = e.kind === 'note' ? [e] : e.notes;
-          ns.forEach((n, k) => { if (!n.techniques.includes('dead')) pluck(midiOfNote(song, n), Math.max(c.currentTime, when + k * 0.012), Math.max(0.25, n.sustain / opts.speed), 0.35); });
+          ns.forEach((n, k) => { if (!n.techniques.includes('dead') && !n.tied) pluck(midiOfNote(song, n), Math.max(c.currentTime, when + k * 0.012), Math.max(0.25, n.sustain / opts.speed), 0.35); });
         }
         if (opts.clickTrack) for (const b of song.beats) {
           if (b.time < st.scheduledTo || b.time >= horizon) continue;

@@ -15,8 +15,10 @@
  *   entry 0 is the manifest: the newline-separated paths of entries 1..n-1
  *
  * Flags: 1 = paths are case-insensitive, 2 = absolute paths, 4 = the table
- * of contents is encrypted. Rocksmith 2014's AES-256-CFB encrypted TOC is
- * decrypted before parsing, so its entries can be read like ordinary PSARC.
+ * of contents is encrypted. An encrypted TOC (used by Rocksmith 2014) cannot
+ * be read without the game's key, and this module does not decrypt it. Every
+ * part it can read is still reported, and the parts it cannot read are
+ * named one by one.
  */
 import { ascii, hex, inflate, readExact, readUintBE, throwIfAborted, type ByteSource } from './bytes';
 import { lzmaDecode } from './lzma';
@@ -60,7 +62,7 @@ export interface PsarcArchive {
   header: PsarcHeader;
   components: ComponentReport[];
   facts: Fact[];
-  /** True when the archive TOC was encrypted on disk (and decrypted by this reader). */
+  /** True when the table of contents is encrypted and the contents cannot be listed. */
   encrypted: boolean;
   /** Entries 1..n-1 (the manifest itself is not listed). Empty when encrypted. */
   files: PsarcFile[];
@@ -156,18 +158,16 @@ export async function openPsarc(src: ByteSource, opts: PsarcOptions = {}): Promi
       );
       return { header, components, facts, encrypted: true, files: [], read: async () => { throw new PsarcFormatError('toc', 'TOC decryption failed.'); } };
     }
+    toc = new Uint8Array([...new Uint8Array(HEADER_BYTES), ...toc]);
   } else {
     components.push({ id: 'toc', label: 'Table of contents', state: 'ok', detail: `${header.entryCount} entries read (${header.tocEntrySize} bytes each).` });
   }
-  // Decrypted payload excludes the 32-byte archive header; normalize it back
-  // to the on-disk layout so offsets below stay identical.
-  if (tocEncrypted) toc = new Uint8Array([...new Uint8Array(HEADER_BYTES), ...toc]);
-
   const entries: PsarcTocEntry[] = [];
   for (let i = 0; i < header.entryCount; i++) {
     const o = HEADER_BYTES + i * header.tocEntrySize;
     entries.push({ index: i, nameHash: hex(toc.subarray(o, o + 16)), firstBlock: readUintBE(toc, o + 16, 4), size: readUintBE(toc, o + 20, 5), offset: readUintBE(toc, o + 25, 5) });
   }
+
   // Block-size table.
   const width = blockWidth(header.blockSize);
   const tableBytes = header.tocLength - entriesEnd;

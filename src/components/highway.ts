@@ -3,7 +3,7 @@
  * horizon toward the string rows; x is the fret, the row (and colour) is the
  * string. Drawn every animation frame; no React involvement.
  */
-import { eventsBetween, type PlaySong, type SongEvent, type SongNote } from '@gma/notation';
+import { eventsBetween, type PlaySong, type SongEvent, type SongNote, type Technique } from '@gma/notation';
 
 /** Low string first. 7- and 8-string guitars get two extra colours. */
 export const STRING_COLORS = ['#e2445f', '#f2c230', '#3a9be6', '#f08a35', '#29b878', '#9a6cf0', '#38c3c8', '#b8b2d6'];
@@ -26,6 +26,8 @@ export interface HighwayState {
 }
 
 const PERSPECTIVE = 3.2;
+/** Extra fall-off of string height with distance (0 = plain perspective). */
+const HEIGHT_FALLOFF = 0.8;
 
 export function drawHighway(g: CanvasRenderingContext2D, W: number, H: number, st: HighwayState) {
   const { song, t, lookahead, cam } = st;
@@ -41,8 +43,17 @@ export function drawHighway(g: CanvasRenderingContext2D, W: number, H: number, s
   const rowY = (s: number) => rowTop + (rowOf(s) * (rowBottom - rowTop)) / Math.max(1, n - 1);
   const fx0 = (f: number) => { const x = m + ((f - cam.lo) / span) * (W - 2 * m); return st.leftHanded ? W - x : x; };
   const scale = (z: number) => 1 / (1 + PERSPECTIVE * Math.max(0, z));
-  const P = (x: number, y: number, z: number) => { const s = scale(z); return [cx + (x - cx) * s, horizonY + (y - horizonY) * s] as const; };
+  // Height above the board's floor shrinks faster with distance than the floor itself
+  // (as if seen from above), so a far chord becomes a compact stack and notes that are
+  // close in time no longer blend into each other's rows. At the strings (z = 0) nothing changes.
+  const floorY = rowBottom + 10;
+  const lift = (z: number) => { const s = scale(z); return s * Math.pow(s, HEIGHT_FALLOFF); };
+  const P = (x: number, y: number, z: number) => {
+    const s = scale(z);
+    return [cx + (x - cx) * s, horizonY + (floorY - horizonY) * s - (floorY - y) * lift(z)] as const;
+  };
   const zOf = (time: number) => (time - t) / lookahead;
+  const label = labelWith(g);
 
   // Background
   const bg = g.createLinearGradient(0, 0, 0, H);
@@ -108,48 +119,142 @@ export function drawHighway(g: CanvasRenderingContext2D, W: number, H: number, s
     g.globalAlpha = 1;
   }
 
+  /** Screen x range (at the strings) of a chord frame for these frets; open strings only → the whole board. */
+  function frameX(frets: (number | null)[]): [number, number] {
+    const frs = frets.filter((f): f is number => f !== null && f > 0);
+    if (!frs.length) return [m + 2, W - m - 2];
+    const a = fx0(Math.min(...frs) - 1), b = fx0(Math.max(...frs));
+    return [Math.min(a, b) - 6, Math.max(a, b) + 6];
+  }
+
+  // Arpeggio hand shapes: a dashed frame on the floor for as long as the shape is held.
+  for (const sh of song.shapes ?? []) {
+    if (!sh.arpeggio) continue;
+    const z1 = Math.max(0, zOf(sh.start)), z2 = Math.min(1, zOf(sh.end));
+    if (z2 <= 0 || z1 >= 1 || z2 <= z1) continue;
+    const [xa, xb] = frameX(sh.frets);
+    const rows = sh.frets.flatMap((f, i) => (f === null ? [] : [rowY(i)]));
+    const yb = rows.length ? Math.max(...rows) + 12 : rowBottom + 10;
+    const [a1, b1] = P(xa, yb, z1), [a2] = P(xb, yb, z1), [c1, d1] = P(xa, yb, z2), [c2] = P(xb, yb, z2);
+    g.save();
+    g.setLineDash([6, 5]);
+    g.strokeStyle = 'rgba(239,237,251,0.45)';
+    g.fillStyle = 'rgba(239,237,251,0.04)';
+    g.lineWidth = 1.5;
+    g.beginPath(); g.moveTo(a1, b1); g.lineTo(a2, b1); g.lineTo(c2, d1); g.lineTo(c1, d1); g.closePath(); g.fill(); g.stroke();
+    g.restore();
+    if (sh.name && zOf(sh.start) > -0.05) {
+      g.fillStyle = '#efedfb';
+      g.font = `600 ${Math.max(10, Math.round(H * 0.032 * scale(z1)))}px Poppins, system-ui, sans-serif`;
+      g.fillText(`${sh.name} arp.`, (a1 + a2) / 2, b1 + 16 * scale(z1));
+    }
+  }
+
   // Notes, far to near so near ones draw on top
   const visible = eventsBetween(song, t - 0.4, t + lookahead).reverse();
+  const rowGap = (rowBottom - rowTop) / Math.max(1, n - 1);
   for (const e of visible) {
     const idx = st.indexOf.get(e) ?? -1;
     const status = st.status(idx);
     const notes = e.kind === 'note' ? [e as SongNote] : e.notes;
     const z = zOf(e.time);
+    // Chords get a frame over their fret span; open strings in a chord are drawn
+    // across that frame only, so they read as part of the chord (as in Rocksmith).
+    let span: [number, number] | undefined;
+    // Techniques every string of a chord shares (palm mute, mute, accent) are shown once, by the name.
+    let shared: Technique[] = [];
     if (e.kind === 'chord' && notes.length > 1) {
-      // Chord frame across the fret span and string rows.
-      const frs = notes.map((x) => x.fret).filter((f) => f > 0);
-      const fl = frs.length ? Math.min(...frs) - 1 : cam.lo, fh = frs.length ? Math.max(...frs) : cam.lo + 1;
+      const [xa, xb] = frameX(notes.map((x) => x.fret));
+      span = [xa, xb];
+      shared = (['palmMute', 'dead', 'accent'] as Technique[]).filter((k) => notes.every((x) => x.techniques.includes(k)));
       const ys = notes.map((x) => rowY(x.string));
-      const xa = Math.min(fx0(fl), fx0(fh)), xb = Math.max(fx0(fl), fx0(fh));
-      const [p1x, p1y] = P(xa - 6, Math.min(...ys) - 12, Math.max(z, 0)), [p2x, p2y] = P(xb + 6, Math.max(...ys) + 12, Math.max(z, 0));
+      const [p1x, p1y] = P(xa, Math.min(...ys) - 12, Math.max(z, 0)), [p2x, p2y] = P(xb, Math.max(...ys) + 12, Math.max(z, 0));
       g.strokeStyle = status === 'hit' ? 'rgba(41,184,120,0.9)' : status === 'miss' ? 'rgba(135,128,180,0.5)' : 'rgba(239,237,251,0.55)';
-      g.lineWidth = 1.5;
+      g.lineWidth = shared.includes('accent') ? 3 : 1.5;
       g.strokeRect(p1x, p1y, p2x - p1x, p2y - p1y);
-      if ((e as Extract<SongEvent, { kind: 'chord' }>).name && z > -0.05) {
+      const title = [e.name, ...shared.filter((k) => k !== 'accent').map((k) => (k === 'palmMute' ? 'PM' : 'mute'))].filter(Boolean).join(' · ');
+      if (title && z > -0.05) {
         g.fillStyle = '#efedfb';
         g.font = `600 ${Math.max(10, Math.round(H * 0.035 * scale(z)))}px Poppins, system-ui, sans-serif`;
-        g.fillText((e as Extract<SongEvent, { kind: 'chord' }>).name, (p1x + p2x) / 2, p1y - 6 * scale(z));
+        g.fillText(title, (p1x + p2x) / 2, p1y - 6 * scale(z));
       }
     }
-    for (const note of notes) drawNote(note, z, status, e.time, idx);
+    if (!span && e.kind === 'note' && e.fret === 0) {
+      // A single open string inside an arpeggio shape belongs to that shape's frame.
+      const sh = song.shapes?.find((x) => x.arpeggio && e.time >= x.start - 0.001 && e.time < x.end);
+      if (sh) span = frameX(sh.frets);
+    }
+    const placed: Label[] = [];
+    for (const note of notes) drawNote(note, z, status, e.time, idx, span, placed, shared);
   }
 
-  function drawNote(note: SongNote, z: number, status: string, time: number, idx: number) {
+  /** Centre x of a fret's lane (or of the open-string span). */
+  function laneX(fret: number, span?: [number, number]) {
+    return fret === 0 ? (span ? (span[0] + span[1]) / 2 : cx) : (fx0(fret - 1) + fx0(fret)) / 2;
+  }
+
+  /** Semitones of bend at `dt` seconds into the note. */
+  function bendAt(note: SongNote, dt: number): number {
+    const c = note.bendCurve;
+    if (c?.length) {
+      if (dt <= c[0].t) return c[0].t < 0.02 ? c[0].step : (c[0].step * dt) / Math.max(0.001, c[0].t);
+      for (let i = 1; i < c.length; i++) if (dt <= c[i].t) { const a = c[i - 1], b = c[i]; return a.step + ((b.step - a.step) * (dt - a.t)) / Math.max(0.001, b.t - a.t); }
+      return c[c.length - 1].step;
+    }
+    if (!note.bend) return 0;
+    const rise = Math.max(0.08, note.sustain * 0.3); // no curve: bend up over the first part, then hold
+    return note.bend * Math.min(1, dt / rise);
+  }
+
+  /**
+   * Sustain tail as a ribbon from the note towards the horizon. Its centre line
+   * shows what the fret hand does while the note rings: slides move it to the
+   * target fret, bends lift it (a full step is most of a string spacing),
+   * vibrato makes it wave and tremolo picking makes it zig-zag.
+   */
+  function drawTail(note: SongNote, z: number, time: number, color: string, span?: [number, number]) {
+    const z1 = Math.max(0, z), z2 = Math.min(1, zOf(time + note.sustain));
+    if (z2 <= z1) return;
+    const y = rowY(note.string);
+    if (note.fret === 0 && !note.techniques.some((k) => k === 'vibrato' || k === 'tremolo' || k === 'bend')) {
+      const x = laneX(0, span), w = span ? span[1] - span[0] - 8 : (W - 2 * m) * 0.9;
+      const [a1, b1] = P(x - w / 2, y, z1), [a2] = P(x + w / 2, y, z1), [c1, d1] = P(x - w / 2, y, z2), [c2] = P(x + w / 2, y, z2);
+      g.fillStyle = color + '66';
+      g.beginPath(); g.moveTo(a1, b1); g.lineTo(a2, b1); g.lineTo(c2, d1); g.lineTo(c1, d1); g.closePath(); g.fill();
+      return;
+    }
+    const fw = note.fret === 0 ? Math.abs(fx0(1) - fx0(0)) : Math.abs(fx0(note.fret) - fx0(note.fret - 1));
+    const x0 = laneX(note.fret, span);
+    const x1 = note.slideTo !== undefined ? laneX(note.slideTo) : note.techniques.includes('slideOut') ? x0 + (fx0(Math.max(0, note.fret - 3)) - fx0(note.fret)) : x0;
+    const vib = note.techniques.includes('vibrato'), trem = note.techniques.includes('tremolo');
+    const steps = 40;
+    // About half the gem's height (wavy tails thinner so the wave reads as a line).
+    const width = Math.min(H * 0.05, rowGap * 0.86) * (vib || trem ? 0.4 : 0.6);
+    g.strokeStyle = color + '77';
+    g.lineCap = 'round';
+    let prev: readonly [number, number] | null = null;
+    for (let k = 0; k <= steps; k++) {
+      const u = k / steps;
+      const zz = z1 + (z2 - z1) * u;
+      const dt = zz * lookahead + t - time; // seconds into the note at this point
+      const along = Math.max(0, Math.min(1, dt / Math.max(0.001, note.sustain)));
+      let x = x0 + (x1 - x0) * (note.slideTo !== undefined || note.techniques.includes('slideOut') ? along : 0);
+      if (vib) x += Math.sin(dt * 2 * Math.PI * 5.5) * fw * 0.16;
+      if (trem) x += (Math.round(dt * 16) % 2 ? 1 : -1) * fw * 0.1;
+      const yy = y - bendAt(note, Math.max(0, dt)) * rowGap * 0.45;
+      const p = P(x, yy, zz);
+      if (prev) { g.lineWidth = Math.max(1.5, width * scale(zz)); g.beginPath(); g.moveTo(prev[0], prev[1]); g.lineTo(p[0], p[1]); g.stroke(); }
+      prev = p;
+    }
+    g.lineCap = 'butt';
+  }
+
+  function drawNote(note: SongNote, z: number, status: string, time: number, idx: number, span: [number, number] | undefined, placed: Label[], shared: Technique[]) {
     const color = STRING_COLORS[note.string % STRING_COLORS.length];
     const y = rowY(note.string);
     const flash = st.flashes.get(idx);
-    // Sustain tail
-    if (note.sustain > 0.05) {
-      const z2 = Math.min(1, zOf(time + note.sustain));
-      const z1 = Math.max(0, z);
-      if (z2 > z1) {
-        const x = note.fret === 0 ? cx : (fx0(note.fret - 1) + fx0(note.fret)) / 2;
-        const w = note.fret === 0 ? (W - 2 * m) * 0.9 : Math.abs(fx0(note.fret) - fx0(note.fret - 1)) * 0.22;
-        const [a1, b1] = P(x - w / 2, y, z1), [a2] = P(x + w / 2, y, z1), [c1, d1] = P(x - w / 2, y, z2), [c2] = P(x + w / 2, y, z2);
-        g.fillStyle = color + '66';
-        g.beginPath(); g.moveTo(a1, b1); g.lineTo(a2, b1); g.lineTo(c2, d1); g.lineTo(c1, d1); g.closePath(); g.fill();
-      }
-    }
+    const tech = note.techniques;
+    if (note.sustain > 0.05) drawTail(note, z, time, color, span);
     if (z < -0.12) return;
     const zz = Math.max(z, 0);
     const s = scale(zz);
@@ -159,54 +264,106 @@ export function drawHighway(g: CanvasRenderingContext2D, W: number, H: number, s
     if (status === 'hit') alpha = Math.max(0, 1 - Math.max(0, t - time) * 3);
     if (z < 0 && status === 'pending') alpha = 0.7;
     g.globalAlpha = alpha;
+    const dead = tech.includes('dead');
+    const mark = dead ? '×' : String(note.fret);
+    // Tied notes continue the previous note: drawn hollow (do not pick again).
+    const hollow = !!note.tied;
+    let tagX: number, tagY: number;
     if (note.fret === 0) {
-      // Open string: a bar across the visible frets.
-      const [ax, ay] = P(m + 4, y, zz), [bx] = P(W - m - 4, y, zz);
+      // Open string: a bar across the visible frets (or the chord frame).
+      const [ax, ay] = P(span ? span[0] + 4 : m + 4, y, zz), [bx] = P(span ? span[1] - 4 : W - m - 4, y, zz);
       const h = Math.max(3, H * 0.022 * s);
-      g.fillStyle = fill;
       roundRect(g, ax, ay - h / 2, bx - ax, h, h / 2);
-      g.fill();
-      g.fillStyle = '#ffffff';
-      g.font = `700 ${Math.max(9, Math.round(H * 0.03 * s))}px Poppins, system-ui, sans-serif`;
-      g.fillText('0', (ax + bx) / 2, ay + h * 0.35);
+      paint(fill, hollow, dead, tech.includes('accent') && !shared.includes('accent'));
+      label(dead ? '×' : '0', (ax + bx) / 2, ay, Math.max(8, Math.round(H * 0.03 * s)), placed);
+      tagX = (ax + bx) / 2; tagY = ay - h / 2 - Math.max(9, H * 0.024 * s) * 0.9;
     } else {
-      const x = (fx0(note.fret - 1) + fx0(note.fret)) / 2;
+      const x = laneX(note.fret);
       const fw = Math.abs(fx0(note.fret) - fx0(note.fret - 1));
-      const rowGap = (rowBottom - rowTop) / Math.max(1, n - 1);
       const w = Math.min(fw * 0.72, W * 0.09) * s;
-      const h = Math.max(7, Math.min(H * 0.05, rowGap * 0.86) * s);
+      // Never taller than the gap between string rows at this depth, so far chords do not overlap.
+      const h = Math.max(3, Math.min(H * 0.05 * s, rowGap * 0.86 * lift(zz)));
       const [px, py] = P(x, y, zz);
-      g.fillStyle = fill;
       if (flash !== undefined && t - flash < 0.25) { g.shadowColor = '#29b878'; g.shadowBlur = 24; }
-      roundRect(g, px - w / 2, py - h / 2, w, h, Math.min(8, h / 3));
-      g.fill();
-      g.shadowBlur = 0;
-      g.fillStyle = '#ffffff';
-      g.font = `700 ${Math.max(9, Math.round(h * 0.55))}px Poppins, system-ui, sans-serif`;
-      g.fillText(String(note.fret), px, py + h * 0.2);
-      const tag = techniqueTag(note);
-      if (tag && s > 0.35) {
-        g.fillStyle = '#efedfb';
-        g.font = `600 ${Math.max(9, Math.round(H * 0.024 * s))}px Poppins, system-ui, sans-serif`;
-        g.fillText(tag, px, py - h * 0.7);
+      if (tech.includes('harmonic') || tech.includes('artificialHarmonic')) {
+        // Harmonics: diamond gem.
+        const r = Math.min(w, h * 1.6) / 2;
+        g.beginPath(); g.moveTo(px, py - r * 0.9); g.lineTo(px + r, py); g.lineTo(px, py + r * 0.9); g.lineTo(px - r, py); g.closePath();
+      } else {
+        roundRect(g, px - w / 2, py - h / 2, w, h, Math.min(8, h / 3));
       }
+      paint(fill, hollow, dead, tech.includes('accent') && !shared.includes('accent'));
+      g.shadowBlur = 0;
+      label(mark, px, py, Math.max(8, Math.round(h * 0.55)), placed);
+      tagX = px; tagY = py - h * 0.5 - Math.max(9, H * 0.024 * s) * 0.6;
+    }
+    const tag = techniqueTag(note, shared);
+    if (tag && s > 0.3) {
+      g.fillStyle = '#efedfb';
+      g.font = `600 ${Math.max(9, Math.round(H * 0.026 * s))}px Poppins, system-ui, sans-serif`;
+      g.fillText(tag, tagX, tagY);
     }
     g.globalAlpha = 1;
   }
+
+  /** Fill the current path as a gem: solid, hollow (tied), dimmed (muted), outlined (accent). */
+  function paint(fill: string, hollow: boolean, dead: boolean, accent: boolean) {
+    if (hollow) {
+      g.fillStyle = fill + '33'; g.fill();
+      g.strokeStyle = fill; g.lineWidth = 2; g.stroke();
+    } else {
+      g.fillStyle = dead ? fill + '88' : fill; g.fill();
+    }
+    if (accent) { g.strokeStyle = '#ffffff'; g.lineWidth = 2.5; g.stroke(); }
+  }
 }
 
-function techniqueTag(n: SongNote): string {
-  const t = n.techniques;
-  if (t.includes('bend')) return n.bend ? `b${n.bend === 1 ? '½' : n.bend === 2 ? '1' : (n.bend / 2).toString()}` : 'b';
-  if (t.includes('hammer')) return 'H';
-  if (t.includes('pull')) return 'P';
-  if (t.includes('slideUp') || t.includes('slideDown')) return n.slideTo !== undefined ? `→${n.slideTo}` : '/';
-  if (t.includes('palmMute')) return 'PM';
-  if (t.includes('dead')) return '×';
-  if (t.includes('harmonic') || t.includes('artificialHarmonic')) return '◇';
-  if (t.includes('tap')) return 'T';
-  if (t.includes('vibrato')) return '~';
-  return '';
+interface Label { x: number; y: number; w: number; h: number }
+
+/**
+ * Fret number centred on (x, y). Far away, string rows sit closer together than
+ * a legible digit is tall; a label that would collide with one already drawn for
+ * the same chord is left out rather than drawn on top of it.
+ */
+function labelWith(g: CanvasRenderingContext2D) {
+  return (text: string, x: number, y: number, fs: number, placed: Label[]) => {
+    const box = { x: x - fs * 0.32 * text.length, y: y - fs * 0.36, w: fs * 0.64 * text.length, h: fs * 0.72 };
+    if (placed.some((p) => box.x < p.x + p.w && p.x < box.x + box.w && box.y < p.y + p.h && p.y < box.y + box.h)) return;
+    placed.push(box);
+    g.fillStyle = '#ffffff';
+    g.font = `700 ${fs}px Poppins, system-ui, sans-serif`;
+    g.fillText(text, x, y + fs * 0.36);
+  };
+}
+
+const BEND_TEXT = (st: number) => (st === 1 ? '½' : st === 2 ? 'full' : st === 3 ? '1½' : st === 4 ? '2' : `${+(st / 2).toFixed(2)}`);
+
+/**
+ * Compact technique marks shown above a gem, e.g. "H", "PM", "↑full ~", "pb↑full↓".
+ * Harmonics, mutes, ties and accents are shown by the gem itself; techniques a
+ * whole chord shares are shown once next to the chord name.
+ */
+export function techniqueTag(n: SongNote, shared: Technique[] = []): string {
+  const t = n.techniques.filter((k) => !shared.includes(k));
+  const out: string[] = [];
+  if (t.includes('hammer')) out.push('H');
+  if (t.includes('pull')) out.push('P');
+  if (t.includes('tap')) out.push('T');
+  if (t.includes('slideUp') || t.includes('slideDown')) out.push(n.slideTo !== undefined ? `${t.includes('slideUp') ? '↗' : '↘'}${n.slideTo}` : t.includes('slideUp') ? '↗' : '↘');
+  if (t.includes('slideIn')) out.push('↗in');
+  if (t.includes('slideOut')) out.push('↘out');
+  if (t.includes('bend') || t.includes('prebend')) {
+    const amt = n.bend ? BEND_TEXT(n.bend) : '';
+    out.push(`${t.includes('prebend') ? 'pb' : ''}↑${amt}${t.includes('release') ? '↓' : ''}`);
+  } else if (t.includes('release')) out.push('↓');
+  if (t.includes('vibrato')) out.push('~');
+  if (t.includes('tremolo')) out.push('≋');
+  if (t.includes('trill')) out.push('tr');
+  if (t.includes('palmMute')) out.push('PM');
+  if (t.includes('artificialHarmonic')) out.push('PH');
+  if (t.includes('ghost')) out.push('( )');
+  if (t.includes('letRing')) out.push('let ring');
+  return out.join(' ');
 }
 
 function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {

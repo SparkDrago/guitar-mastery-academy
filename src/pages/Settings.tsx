@@ -8,6 +8,7 @@ import { cx, download, getConfig, readFile, relativeDay } from '@/lib/core';
 import { navigate, useDocumentTitle, useLocation } from '@/lib/router';
 import { setMasterVolume } from '@/lib/audio';
 import { getMidiOutputs, getMidiSettings, initMidi, midiPanic, midiSupported, sendMidiTest, subscribeMidi, updateMidiSettings } from '@/lib/midi';
+import { getAudioInputSettings, probeAsioBridge, subscribeAudioInput, updateAudioInputSettings, type BridgeApi, type BridgeDeviceInfo, type BrowserChannel, type InputMode } from '@/lib/asio';
 import { Badge, Button, Callout, Card, Field, Modal, PageHeader, Segmented, Select, Stepper, Toggle } from '@/components/ui';
 import { TuningPicker } from '@/components/widgets';
 import { CustomTuningList } from '@/components/TuningEditor';
@@ -50,6 +51,7 @@ export function SettingsPage() {
             <Field label="App volume"><input type="range" min={0} max={100} value={volume} onChange={(e) => { const v = Number(e.target.value); setVolume(v); setMasterVolume(v / 100); try { localStorage.setItem(VOLUME_KEY, String(v)); } catch { /* not persisted */ } }} aria-label="Volume" className="w-full" /></Field>
           </div>
         </Card>
+        <AudioInputCard />
         <MidiOutputCard />
         <Card title="Custom tunings"><CustomTuningList /></Card>
         <Card title="Your data" subtitle={store.getSnapshot().persistent ? 'Saved in this browser and, when signed in, in your account.' : 'This browser blocks storage: progress lasts only for this visit unless you sign in.'}>
@@ -201,6 +203,152 @@ export function AccountPage() {
         ) : <AuthForms />}
       </Card>
     </div>
+  );
+}
+
+function AudioInputCard() {
+  const [cfg, setCfg] = useState(() => getAudioInputSettings());
+  const [browserDevices, setBrowserDevices] = useState<{ id: string; label: string }[]>([]);
+  const [bridgeDevices, setBridgeDevices] = useState<BridgeDeviceInfo[]>([]);
+  const [bridgeStatus, setBridgeStatus] = useState<'idle' | 'checking' | 'ok' | 'error'>('idle');
+  const [bridgeError, setBridgeError] = useState<string | null>(null);
+
+  useEffect(() => subscribeAudioInput(() => setCfg(getAudioInputSettings())), []);
+
+  const refreshBrowserDevices = async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    try {
+      const list = await navigator.mediaDevices.enumerateDevices();
+      const inputs = list
+        .filter((d) => d.kind === 'audioinput')
+        .map((d, i) => ({ id: d.deviceId, label: d.label || `Audio Input ${i + 1}` }));
+      setBrowserDevices(inputs);
+    } catch {
+      // ignore
+    }
+  };
+
+  useEffect(() => { void refreshBrowserDevices(); }, []);
+
+  const checkBridge = async (url = cfg.bridgeUrl, api: BridgeApi = cfg.bridgeApi) => {
+    setBridgeStatus('checking');
+    setBridgeError(null);
+    const r = await probeAsioBridge(url, api);
+    if (r.ok) {
+      setBridgeDevices(r.devices);
+      setBridgeStatus('ok');
+      if (cfg.bridgeDeviceId < 0 && r.devices.length) {
+        const def = r.devices.find((d) => d.isDefaultInput) ?? r.devices[0];
+        updateAudioInputSettings({ bridgeDeviceId: def.id });
+      }
+    } else {
+      setBridgeDevices([]);
+      setBridgeStatus('error');
+      setBridgeError(r.error);
+    }
+  };
+
+  useEffect(() => {
+    if (cfg.mode === 'asio') void checkBridge(cfg.bridgeUrl, cfg.bridgeApi);
+  }, [cfg.mode, cfg.bridgeApi]);
+
+  const activeBridgeDevice = bridgeDevices.find((d) => d.id === cfg.bridgeDeviceId);
+  const maxCh = Math.max(2, activeBridgeDevice?.inputChannels ?? 2);
+
+  return (
+    <Card title="Guitar Audio Input (Interface / ASIO)" subtitle="Choose your audio interface directly in the browser or connect to the local PC ASIO bridge.">
+      <div className="space-y-4">
+        <Field label="Input engine">
+          <Segmented
+            value={cfg.mode}
+            onChange={(v) => updateAudioInputSettings({ mode: v as InputMode })}
+            options={[
+              { value: 'browser', label: 'Browser (WASAPI / CoreAudio)' },
+              { value: 'asio', label: 'PC ASIO Bridge (Local)' },
+            ]}
+            aria-label="Audio input engine"
+          />
+        </Field>
+
+        {cfg.mode === 'browser' ? (
+          <>
+            <Field label="Audio interface / microphone" hint="Grant mic permission once to see full device names.">
+              <div className="flex gap-2">
+                <div className="min-w-0 flex-1">
+                  <Select
+                    value={cfg.browserDeviceId}
+                    onChange={(v) => updateAudioInputSettings({ browserDeviceId: v })}
+                    aria-label="Browser audio input device"
+                    options={[
+                      { value: '', label: 'System default input' },
+                      ...browserDevices.map((d) => ({ value: d.id, label: d.label })),
+                    ]}
+                  />
+                </div>
+                <Button size="sm" variant="ghost" onClick={() => void refreshBrowserDevices()} aria-label="Refresh audio devices"><LuRefreshCw size={14} /></Button>
+              </div>
+            </Field>
+            <Field label="Interface channel" hint="Focusrite Scarlett Solo & many 2-in interfaces put the guitar Hi-Z jack on Input 2.">
+              <Segmented
+                value={String(cfg.browserChannel)}
+                onChange={(v) => updateAudioInputSettings({ browserChannel: (v === 'mix' ? 'mix' : Number(v)) as BrowserChannel })}
+                options={[
+                  { value: 'mix', label: 'Default / Mix' },
+                  { value: '0', label: 'Input 1 (Left)' },
+                  { value: '1', label: 'Input 2 (Right)' },
+                ]}
+                aria-label="Interface channel"
+              />
+            </Field>
+          </>
+        ) : (
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs text-ink-300">Run <code className="rounded bg-ink-800 px-1.5 py-0.5 font-mono text-ink-100">npm start</code> inside <code className="rounded bg-ink-800 px-1.5 py-0.5 font-mono text-ink-100">asio-bridge/</code> on your PC.</span>
+              <Badge tone={bridgeStatus === 'ok' ? 'ok' : bridgeStatus === 'error' ? 'warn' : 'neutral'}>
+                {bridgeStatus === 'ok' ? `${bridgeDevices.length} device${bridgeDevices.length === 1 ? '' : 's'}` : bridgeStatus === 'checking' ? 'Connecting…' : bridgeStatus === 'error' ? 'Offline' : 'Not checked'}
+              </Badge>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Bridge URL">
+                <input className="input font-mono text-xs" value={cfg.bridgeUrl} onChange={(e) => updateAudioInputSettings({ bridgeUrl: e.target.value })} />
+              </Field>
+              <Field label="Driver API">
+                <Segmented
+                  value={cfg.bridgeApi}
+                  onChange={(v) => updateAudioInputSettings({ bridgeApi: v as BridgeApi, bridgeDeviceId: -1 })}
+                  options={[{ value: 'asio', label: 'ASIO' }, { value: 'wasapi', label: 'WASAPI' }]}
+                  aria-label="Bridge driver API"
+                />
+              </Field>
+            </div>
+            <Field label="ASIO device">
+              <div className="flex gap-2">
+                <div className="min-w-0 flex-1">
+                  <Select
+                    value={String(cfg.bridgeDeviceId)}
+                    onChange={(v) => updateAudioInputSettings({ bridgeDeviceId: Number(v) })}
+                    aria-label="ASIO device"
+                    options={bridgeDevices.length
+                      ? bridgeDevices.map((d) => ({ value: String(d.id), label: `${d.name} (${d.inputChannels} in)` }))
+                      : [{ value: '-1', label: 'No ASIO devices loaded' }]}
+                  />
+                </div>
+                <Button size="sm" variant="ghost" onClick={() => void checkBridge()} aria-label="Reconnect ASIO bridge"><LuRefreshCw size={14} /></Button>
+              </div>
+            </Field>
+            <Field label="Guitar input channel (1-based)" hint="Select the physical jack your guitar is plugged into.">
+              <Stepper value={cfg.bridgeChannel + 1} onChange={(v) => updateAudioInputSettings({ bridgeChannel: Math.max(0, v - 1) })} min={1} max={maxCh} label="ASIO channel" />
+            </Field>
+            {bridgeError && <p className="text-xs text-warn-400">{bridgeError}</p>}
+          </>
+        )}
+
+        <Field label={`Input gain: ${Math.round(cfg.gain * 100)}%`} hint="Boost quiet DI pickups if the Tuner or Play mode misses notes.">
+          <input type="range" min={25} max={400} step={5} value={Math.round(cfg.gain * 100)} onChange={(e) => updateAudioInputSettings({ gain: Number(e.target.value) / 100 })} aria-label="Input gain" className="w-full" />
+        </Field>
+      </div>
+    </Card>
   );
 }
 
